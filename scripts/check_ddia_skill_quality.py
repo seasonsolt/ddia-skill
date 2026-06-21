@@ -26,6 +26,89 @@ REFERENCE_FILES = {
     "skills/ddia-system-design/references/architecture-review-checklists.md": "# Architecture Review Checklists",
 }
 
+REFERENCE_SECTIONS = {
+    "skills/ddia-system-design/references/topic-map.md": [
+        "Reliability, Scalability, Maintainability",
+        "Data Models And Query Languages",
+        "Storage And Retrieval",
+        "Encoding And Evolution",
+        "Replication",
+        "Partitioning",
+        "Transactions And Isolation",
+        "Distributed Faults",
+        "Consistency And Consensus",
+        "Batch Processing",
+        "Stream Processing",
+        "Derived Data And Correctness",
+    ],
+    "skills/ddia-system-design/references/system-design-principles.md": [
+        "Start With Workload Shape",
+        "Treat Guarantees As Product Behavior",
+        "Model Derived Data Explicitly",
+        "Design For Partial Failure",
+        "Make Evolution A First-Class Requirement",
+        "Prefer Simple Ownership Boundaries",
+        "Review Storage Choices By Access Pattern",
+        "Review Replication Choices By Failure Behavior",
+        "Review Partitioning Choices By Skew And Query Routing",
+        "Review Transactions By Anomaly",
+        "Review Streams By Replay And Time",
+    ],
+    "skills/ddia-system-design/references/architecture-review-checklists.md": [
+        "Workload Checklist",
+        "Data Model Checklist",
+        "Replication And Consistency Checklist",
+        "Partitioning Checklist",
+        "Transaction And Correctness Checklist",
+        "Distributed Failure Checklist",
+        "Batch And Stream Checklist",
+        "Derived Data Checklist",
+        "Recommendation Checklist",
+    ],
+}
+
+REFERENCE_ROLE_TERMS = {
+    "skills/ddia-system-design/references/topic-map.md": [
+        "reliability",
+        "scalability",
+        "maintainability",
+        "replication",
+        "partitioning",
+        "transactions",
+        "isolation",
+        "linearizability",
+        "consensus",
+        "batch processing",
+        "stream processing",
+        "derived data",
+    ],
+    "skills/ddia-system-design/references/system-design-principles.md": [
+        "workload",
+        "guarantees",
+        "derived data",
+        "partial failure",
+        "evolution",
+        "ownership",
+        "storage",
+        "replication",
+        "partitioning",
+        "transactions",
+        "streams",
+    ],
+    "skills/ddia-system-design/references/architecture-review-checklists.md": [
+        "workload",
+        "data model",
+        "replication",
+        "partitioning",
+        "transaction",
+        "distributed failure",
+        "batch",
+        "stream",
+        "derived data",
+        "recommendation",
+    ],
+}
+
 PROMPT_FILES = {
     "evaluation/prompts/01-order-consistency.md": "# Prompt 1:",
     "evaluation/prompts/02-event-pipeline.md": "# Prompt 2:",
@@ -79,6 +162,24 @@ def read_existing_text(repo: pathlib.Path, relative_paths: list[str]) -> str:
     return "\n".join(chunks).lower()
 
 
+def section_body(text: str, heading: str) -> str:
+    lines = text.splitlines()
+    marker = f"## {heading}"
+    for index, line in enumerate(lines):
+        if line.strip() == marker:
+            body = []
+            for body_line in lines[index + 1 :]:
+                if body_line.startswith("## "):
+                    break
+                body.append(body_line)
+            return "\n".join(body)
+    return ""
+
+
+def has_non_empty_bullet(body: str) -> bool:
+    return any(line.strip().startswith("- ") and len(line.strip()) > 2 for line in body.splitlines())
+
+
 def validate_rubric(repo: pathlib.Path) -> list[str]:
     relative = "evaluation/rubric.md"
     text = read_text(repo / relative)
@@ -126,15 +227,23 @@ def validate_results_template(repo: pathlib.Path) -> list[str]:
     errors = []
     if not text.strip():
         return [f"{relative}: file is empty"]
-    for title in PROMPT_TITLES:
+    for index, title in enumerate(PROMPT_TITLES):
         if title.lower() not in lower:
             errors.append(f"{relative}: missing {title}")
-    for label in DIMENSION_LABELS:
-        if f"- {label.lower()}:" not in lower:
-            errors.append(f"{relative}: missing {label} label")
-    for label in ["- total score:", "- pass:", "overall decision"]:
-        if label not in lower:
-            errors.append(f"{relative}: missing {label}")
+            continue
+        start = lower.find(f"## {title.lower()}")
+        next_start = lower.find("\n## prompt ", start + 1)
+        if next_start == -1:
+            next_start = lower.find("\n## overall decision", start + 1)
+        section = lower[start:next_start] if next_start != -1 else lower[start:]
+        for label in DIMENSION_LABELS:
+            if f"- {label.lower()}:" not in section:
+                errors.append(f"{relative}: {title} missing {label} label")
+        for label in ["Total score", "Pass", "Notes"]:
+            if f"- {label.lower()}:" not in section:
+                errors.append(f"{relative}: {title} missing {label}")
+        if index == len(PROMPT_TITLES) - 1 and "overall decision" not in lower:
+            errors.append(f"{relative}: missing Overall Decision")
     return errors
 
 
@@ -153,6 +262,17 @@ def validate_references(repo: pathlib.Path) -> list[str]:
             errors.append(f"{relative}: content is too short")
         if section_count < 2:
             errors.append(f"{relative}: expected at least 2 sections")
+        for section in REFERENCE_SECTIONS[relative]:
+            body = section_body(text, section)
+            if not body:
+                errors.append(f"{relative}: missing section {section}")
+                continue
+            if not has_non_empty_bullet(body):
+                errors.append(f"{relative}: section {section} needs at least one non-empty bullet")
+        lower = text.lower()
+        for term in REFERENCE_ROLE_TERMS[relative]:
+            if term not in lower:
+                errors.append(f"{relative}: missing role term {term}")
     return errors
 
 

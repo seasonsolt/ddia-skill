@@ -22,59 +22,85 @@ def write(path: pathlib.Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+TOPIC_MAP_SECTIONS = [
+    "Reliability, Scalability, Maintainability",
+    "Data Models And Query Languages",
+    "Storage And Retrieval",
+    "Encoding And Evolution",
+    "Replication",
+    "Partitioning",
+    "Transactions And Isolation",
+    "Distributed Faults",
+    "Consistency And Consensus",
+    "Batch Processing",
+    "Stream Processing",
+    "Derived Data And Correctness",
+]
+
+PRINCIPLE_SECTIONS = [
+    "Start With Workload Shape",
+    "Treat Guarantees As Product Behavior",
+    "Model Derived Data Explicitly",
+    "Design For Partial Failure",
+    "Make Evolution A First-Class Requirement",
+    "Prefer Simple Ownership Boundaries",
+    "Review Storage Choices By Access Pattern",
+    "Review Replication Choices By Failure Behavior",
+    "Review Partitioning Choices By Skew And Query Routing",
+    "Review Transactions By Anomaly",
+    "Review Streams By Replay And Time",
+]
+
+CHECKLIST_SECTIONS = [
+    "Workload Checklist",
+    "Data Model Checklist",
+    "Replication And Consistency Checklist",
+    "Partitioning Checklist",
+    "Transaction And Correctness Checklist",
+    "Distributed Failure Checklist",
+    "Batch And Stream Checklist",
+    "Derived Data Checklist",
+    "Recommendation Checklist",
+]
+
+
+def reference_with_bullets(heading: str, sections: list[str], terms: str) -> str:
+    body = [heading, ""]
+    for section in sections:
+        body.extend(
+            [
+                f"## {section}",
+                "",
+                f"- {section} coverage includes {terms}.",
+                "",
+            ]
+        )
+    return "\n".join(body)
+
+
 def make_complete_repo(root: pathlib.Path) -> None:
     write(root / "skills/ddia-system-design/SKILL.md", "# DDIA Skill\n\nreliability scalability maintainability\n")
     write(root / "skills/ddia-system-design/agents/openai.yaml", "name: ddia-system-design\n")
+    all_terms = "reliability scalability maintainability replication partitioning transactions isolation linearizability consensus batch processing stream processing derived data"
     write(
         root / "skills/ddia-system-design/references/topic-map.md",
-        """# DDIA Topic Map For Backend Architecture
-
-## Reliability, Scalability, Maintainability
-
-reliability scalability maintainability replication partitioning transactions isolation linearizability consensus batch processing stream processing derived data
-
-## Replication
-
-Use this section to validate meaningful structure and content.
-
-## Partitioning
-
-Use this section to validate meaningful structure and content.
-""",
+        reference_with_bullets("# DDIA Topic Map For Backend Architecture", TOPIC_MAP_SECTIONS, all_terms),
     )
     write(
         root / "skills/ddia-system-design/references/system-design-principles.md",
-        """# System Design Principles
-
-## Start With Workload Shape
-
-reliability scalability maintainability replication partitioning transactions isolation linearizability consensus batch processing stream processing derived data
-
-## Treat Guarantees As Product Behavior
-
-Use this section to validate meaningful structure and content.
-
-## Model Derived Data Explicitly
-
-Use this section to validate meaningful structure and content.
-""",
+        reference_with_bullets(
+            "# System Design Principles",
+            PRINCIPLE_SECTIONS,
+            "workload guarantees derived data partial failure evolution ownership storage replication partitioning transactions streams",
+        ),
     )
     write(
         root / "skills/ddia-system-design/references/architecture-review-checklists.md",
-        """# Architecture Review Checklists
-
-## Workload Checklist
-
-reliability scalability maintainability replication partitioning transactions isolation linearizability consensus batch processing stream processing derived data
-
-## Replication And Consistency Checklist
-
-Use this section to validate meaningful structure and content.
-
-## Derived Data Checklist
-
-Use this section to validate meaningful structure and content.
-""",
+        reference_with_bullets(
+            "# Architecture Review Checklists",
+            CHECKLIST_SECTIONS,
+            "workload data model replication partitioning transaction distributed failure batch stream derived data recommendation",
+        ),
     )
     write(
         root / "evaluation/rubric.md",
@@ -246,6 +272,109 @@ class DdiaSkillQualityTest(unittest.TestCase):
 
         self.assertIn("consensus", report["missing_terms"])
         self.assertTrue(any("topic-map.md" in item for item in report["structure_errors"]))
+
+    def test_results_template_requires_scoring_fields_in_each_prompt_section(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_repo(repo)
+            write(
+                repo / "evaluation/results-template.md",
+                """# DDIA Skill Evaluation Results
+
+## Prompt 1: Order Consistency
+
+- Workload framing:
+- Trade-off quality:
+- Failure-mode coverage:
+- Correctness reasoning:
+- Verification value:
+- Total score:
+- Pass:
+- Notes:
+
+## Prompt 2: Event Pipeline
+
+## Prompt 3: Database Choice
+
+## Prompt 4: Replica Lag
+
+## Prompt 5: Derived Data
+
+## Overall Decision
+
+- All prompts passed:
+- Skill changes needed:
+""",
+            )
+
+            report = checker.check_repo(repo)
+
+        self.assertTrue(any("Prompt 2: Event Pipeline" in item for item in report["invalid_files"]))
+        self.assertTrue(any("Total score" in item for item in report["invalid_files"]))
+
+    def test_reference_sections_require_non_empty_bullets(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_repo(repo)
+            body = ["# DDIA Topic Map For Backend Architecture", ""]
+            for section in TOPIC_MAP_SECTIONS:
+                body.extend([f"## {section}", "", "Filler paragraph without a bullet.", ""])
+            write(repo / "skills/ddia-system-design/references/topic-map.md", "\n".join(body))
+
+            report = checker.check_repo(repo)
+
+        self.assertTrue(any("topic-map.md" in item and "non-empty bullet" in item for item in report["structure_errors"]))
+
+    def test_reference_role_terms_must_be_in_their_own_reference_files(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_repo(repo)
+            concentrated_terms = " ".join(
+                [
+                    "reliability",
+                    "scalability",
+                    "maintainability",
+                    "linearizability",
+                    "consensus",
+                    "batch processing",
+                    "stream processing",
+                    "workload",
+                    "guarantees",
+                    "derived data",
+                    "partial failure",
+                    "evolution",
+                    "ownership",
+                    "storage",
+                    "replication",
+                    "partitioning",
+                    "transactions",
+                    "streams",
+                ]
+            )
+            write(
+                repo / "skills/ddia-system-design/references/topic-map.md",
+                reference_with_bullets(
+                    "# DDIA Topic Map For Backend Architecture",
+                    TOPIC_MAP_SECTIONS,
+                    concentrated_terms,
+                ),
+            )
+            write(
+                repo / "skills/ddia-system-design/references/system-design-principles.md",
+                reference_with_bullets(
+                    "# System Design Principles",
+                    [f"Generic Section {index}" for index in range(1, len(PRINCIPLE_SECTIONS) + 1)],
+                    "generic architecture text",
+                ),
+            )
+
+            report = checker.check_repo(repo)
+
+        self.assertEqual(report["missing_terms"], [])
+        self.assertTrue(any("system-design-principles.md" in item and "workload" in item for item in report["structure_errors"]))
 
     def test_cli_returns_failure_for_incomplete_repo(self):
         with tempfile.TemporaryDirectory() as tmp:
