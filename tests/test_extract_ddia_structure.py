@@ -125,7 +125,9 @@ class ExtractDdiaStructureTest(unittest.TestCase):
                 load_module(pathlib.Path("missing.py"))
 
     def test_extracts_expected_ddia_outline_from_local_pdf(self):
-        self.assertTrue(PDF_PATH.exists(), f"Missing PDF: {PDF_PATH}")
+        if not PDF_PATH.exists():
+            self.skipTest(f"Missing PDF: {PDF_PATH}")
+
         module = load_module()
 
         with tempfile.TemporaryDirectory() as tmp:
