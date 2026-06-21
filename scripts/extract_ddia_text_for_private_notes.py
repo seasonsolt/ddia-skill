@@ -2,6 +2,7 @@
 import argparse
 import json
 import pathlib
+import subprocess
 from typing import Any
 
 from pypdf import PdfReader
@@ -23,7 +24,35 @@ def write_page_text(output_dir: pathlib.Path, page_number: int, text: str) -> pa
     return page_path
 
 
-def extract_private_text(pdf_path: pathlib.Path, output_dir: pathlib.Path) -> dict[str, Any]:
+def ensure_private_output_dir(output_dir: pathlib.Path, repo_root: pathlib.Path = pathlib.Path.cwd()) -> None:
+    repo_root = repo_root.resolve()
+    output_dir = output_dir.resolve()
+    default_private_dir = repo_root / "tmp" / "ddia-extract"
+
+    if output_dir == default_private_dir or output_dir.is_relative_to(default_private_dir):
+        return
+
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--", str(output_dir)],
+        cwd=repo_root,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+
+    raise ValueError(
+        f"Refusing to write extracted DDIA text to non-private output directory: {output_dir}"
+    )
+
+
+def extract_private_text(
+    pdf_path: pathlib.Path,
+    output_dir: pathlib.Path,
+    enforce_private_output: bool = True,
+) -> dict[str, Any]:
+    if enforce_private_output:
+        ensure_private_output_dir(output_dir)
+
     reader = PdfReader(str(pdf_path))
     pages_dir = output_dir / "pages"
     page_rows: list[dict[str, Any]] = []
