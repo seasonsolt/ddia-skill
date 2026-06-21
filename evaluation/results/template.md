@@ -21,6 +21,12 @@ Copy this file to `evaluation/results/YYYY-MM-DD-<commit>.md` for each benchmark
 | --- | --- | --- | --- | --- | --- | --- |
 | Add one row per benchmark case. | Score 0-2. | Score 0-2. | Score 0-2. | Score 0-2. | Score 0-2. | Sum scored dimensions. |
 
+## Case Notes
+
+| Case | Notes / failure notes |
+| --- | --- |
+| Add one row per benchmark case. | Record failed dimensions, scoring rationale, regression context, or `none`. |
+
 ## Regression Notes
 
 - Previous result compared: write the result file path.
