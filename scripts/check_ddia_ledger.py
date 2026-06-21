@@ -33,6 +33,11 @@ def count_field_bullets(chapter_text: str, field: str) -> int:
     return len([line for line in match.group("body").splitlines() if line.startswith("- ") and len(line.strip()) > 2])
 
 
+def has_reviewed_yes(chapter_text: str) -> bool:
+    header = chapter_text.split("\n### ", 1)[0]
+    return re.search(r"^Reviewed: yes$", header, flags=re.MULTILINE) is not None
+
+
 def check_ledger_text(text: str, required_chapters: int = 12) -> dict[str, Any]:
     chapters = split_chapters(text)
     missing_chapters = []
@@ -44,7 +49,7 @@ def check_ledger_text(text: str, required_chapters: int = 12) -> dict[str, Any]:
             missing_chapters.append(prefix.rstrip())
 
     for title, chapter_text in chapters:
-        reviewed = "Reviewed: yes" in chapter_text
+        reviewed = has_reviewed_yes(chapter_text)
         enough_bullets = all(count_field_bullets(chapter_text, field) >= 3 for field in FIELD_NAMES)
         if not reviewed or not enough_bullets:
             incomplete_chapters.append(title)
