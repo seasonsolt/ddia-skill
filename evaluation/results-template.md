@@ -11,6 +11,7 @@ Skill version:
 - Failure-mode coverage:
 - Correctness reasoning:
 - Verification value:
+- Total score:
 - Pass:
 - Notes:
 
@@ -21,6 +22,7 @@ Skill version:
 - Failure-mode coverage:
 - Correctness reasoning:
 - Verification value:
+- Total score:
 - Pass:
 - Notes:
 
@@ -31,6 +33,7 @@ Skill version:
 - Failure-mode coverage:
 - Correctness reasoning:
 - Verification value:
+- Total score:
 - Pass:
 - Notes:
 
@@ -41,6 +44,7 @@ Skill version:
 - Failure-mode coverage:
 - Correctness reasoning:
 - Verification value:
+- Total score:
 - Pass:
 - Notes:
 
@@ -51,6 +55,7 @@ Skill version:
 - Failure-mode coverage:
 - Correctness reasoning:
 - Verification value:
+- Total score:
 - Pass:
 - Notes:
 
