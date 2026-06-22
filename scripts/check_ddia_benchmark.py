@@ -425,6 +425,8 @@ def validate_coding_ab_judge_result_payload(payload: object) -> list[str]:
         return ["payload: must be a JSON object"]
 
     errors = []
+    if any(leak_key in payload for leak_key in ["mapping", "arm", "variant"]):
+        errors.append("payload: must not reveal control or treatment mapping")
 
     case_id = payload.get("case_id")
     if not isinstance(case_id, str) or not case_id.strip():
@@ -580,6 +582,19 @@ def validate_coding_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]
         for case_id in CODING_AB_CASES:
             if case_id not in template_case_ids:
                 errors.append(f"evaluation/coding-ab/results-template.md: missing case {case_id}")
+        normalized_template = template_text.lower()
+        has_adversarial_max_14 = (
+            "adversarial" in normalized_template
+            and (
+                "maximum score of 14" in normalized_template
+                or "max 14" in normalized_template
+                or "out of 14" in normalized_template
+            )
+        )
+        if not has_adversarial_max_14:
+            errors.append(
+                "evaluation/coding-ab/results-template.md: must explain adversarial coding cases have max 14"
+            )
 
     control_text = read_text(repo / "evaluation/coding-ab/control-instructions.md")
     if control_text and (

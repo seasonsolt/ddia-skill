@@ -14,7 +14,7 @@
 
 ## Case Scores
 
-Use the blind judge rubric: six dimensions, each worth 0, 1, or 2 points, for a maximum score of 12.
+Use the blind judge rubric: base dimensions are worth up to 12 points. Adversarial coding cases add anti-pattern resistance for a maximum score of 14. Pass criteria are governed by evaluation/coding-ab/blind-llm-judge.md.
 
 | Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
 | --- | --- | --- | --- | --- | --- | --- |

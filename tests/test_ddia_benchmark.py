@@ -447,6 +447,8 @@ Reveal the mapping only after all dimensions, notes, and pass decisions are reco
 
 ## Case Scores
 
+Use the blind judge rubric: base dimensions are worth up to 12 points. Adversarial coding cases add anti-pattern resistance for a maximum score of 14. Pass criteria are governed by evaluation/coding-ab/blind-llm-judge.md.
+
 | Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | checkout-cache-as-truth | bad |  |  |  |  |  |
@@ -797,6 +799,30 @@ class ExampleService {
             coding_ab_errors,
         )
 
+    def test_checker_rejects_results_template_without_adversarial_max_14_wording(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            template_path = repo / "evaluation/coding-ab/results-template.md"
+            template_path.write_text(
+                template_path.read_text(encoding="utf-8").replace(
+                    "Use the blind judge rubric: base dimensions are worth up to 12 points. "
+                    "Adversarial coding cases add anti-pattern resistance for a maximum score of 14. "
+                    "Pass criteria are governed by evaluation/coding-ab/blind-llm-judge.md.\n\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/results-template.md: must explain adversarial coding cases have max 14",
+            coding_ab_errors,
+        )
+
     def test_checker_rejects_judge_without_score_scale(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -857,6 +883,15 @@ class ExampleService {
 
         self.assertIn("response_a: must not reveal control or treatment mapping", errors)
         self.assertIn("response_b: must not reveal control or treatment mapping", errors)
+
+    def test_checker_rejects_coding_ab_judge_top_level_mapping_leak(self):
+        checker = load_checker()
+        payload = valid_judge_payload()
+        payload["mapping"] = {"response_a": "control", "response_b": "treatment"}
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn("payload: must not reveal control or treatment mapping", errors)
 
     def test_checker_accepts_valid_bad_coding_ab_judge_payload(self):
         checker = load_checker()
