@@ -316,6 +316,9 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
     else:
         guide_errors.extend(validate_required_sections(guide_path, GUIDE_PATH, GUIDE_SECTIONS))
 
+    ab_missing_paths, ab_errors = validate_ab_assets(repo)
+    missing_paths.extend(ab_missing_paths)
+
     return {
         "case_counts": case_counts,
         "missing_paths": missing_paths,
@@ -323,6 +326,7 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
         "rubric_errors": rubric_errors,
         "template_errors": template_errors,
         "guide_errors": guide_errors,
+        "ab_errors": ab_errors,
     }
 
 
@@ -334,7 +338,14 @@ def main() -> int:
     report = check_benchmark(args.repo)
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
 
-    error_keys = ["missing_paths", "case_errors", "rubric_errors", "template_errors", "guide_errors"]
+    error_keys = [
+        "missing_paths",
+        "case_errors",
+        "rubric_errors",
+        "template_errors",
+        "guide_errors",
+        "ab_errors",
+    ]
     return 1 if any(report[key] for key in error_keys) else 0
 
 

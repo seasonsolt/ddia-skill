@@ -72,22 +72,28 @@ with no zero-scored dimension.
 Result: all five prompts passed. The full record is in
 [`evaluation/results.md`](evaluation/results.md).
 
-## A/B Status
+## Pilot A/B Result
 
-These results are not an A/B test yet. They are criterion-based evaluations of
-skill-enabled responses. They show that the skill can produce useful DDIA-style
-answers on the selected cases, but they do not measure lift against a no-skill
-baseline.
+The repository now includes a five-case pilot A/B evaluation. It compares the
+same model answering selected benchmark cases without the skill against the
+same model answering with `ddia-system-design`.
 
-An A/B run should compare:
+Pilot result:
 
-- A: the same model answering each case without `ddia-system-design`
-- B: the same model answering each case with `ddia-system-design`
+- Control total: 38
+- Treatment total: 51
+- Lift: +13 points across 5 cases
+- Pass-rate change: treatment moved four must-pass cases from fail to pass
 
-Both runs should use the same prompts, model, temperature, and scoring rubric.
-The evaluator should score responses without knowing which run produced them.
-Useful metrics include total score lift, per-dimension lift, pass-rate change,
-and anti-pattern resistance improvement on bad and adversarial cases.
+The strongest gains came from correctness reasoning, verification value, and
+anti-pattern resistance. The treatment responses challenged unsafe premises
+more directly, including Redis-as-payment-truth and end-to-end exactly-once
+claims.
+
+This is pilot A/B evidence, not statistical proof. The response text, scoring
+notes, and mapping are preserved in
+[`evaluation/ab/pilot-results.md`](evaluation/ab/pilot-results.md) so another
+evaluator can rescore the run.
 
 ## Benchmark Suite
 
@@ -157,6 +163,7 @@ evaluation/prompts/             First-pass evaluation prompts
 evaluation/results.md           First evaluation result record
 evaluation/cases/               Good, bad, and adversarial benchmark cases
 evaluation/rubrics/             Answer-quality and process-compliance rubrics
+evaluation/ab/                  A/B instructions, template, and pilot result
 scripts/                        Extraction and validation helpers
 tests/                          Deterministic unit tests
 analysis/                       Original reading ledger

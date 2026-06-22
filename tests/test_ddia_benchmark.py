@@ -320,12 +320,14 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(report["rubric_errors"], [])
         self.assertEqual(report["template_errors"], [])
         self.assertEqual(report["guide_errors"], [])
+        self.assertEqual(report["ab_errors"], [])
 
     def test_checker_accepts_complete_benchmark(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
 
             report = checker.check_benchmark(repo)
 
@@ -335,6 +337,19 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(report["rubric_errors"], [])
         self.assertEqual(report["template_errors"], [])
         self.assertEqual(report["guide_errors"], [])
+        self.assertEqual(report["ab_errors"], [])
+
+    def test_benchmark_checker_reports_missing_ab_file(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            (repo / "evaluation/ab/pilot-results.md").unlink()
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn("evaluation/ab/pilot-results.md", report["missing_paths"])
 
     def test_checker_rejects_missing_required_case_section(self):
         checker = load_checker()
