@@ -157,6 +157,7 @@ AB_SCORE_COLUMNS = [
     "Pass/fail change",
     "Notes",
 ]
+AB_SCORE_ROW_COLUMN_COUNT = 2 + len(AB_SCORE_COLUMNS)
 AB_LIMITATION_LABELS = [
     "Self-evaluation bias",
     "Response-shape/rubric alignment",
@@ -268,7 +269,7 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
         cells = markdown_table_cells(line)
         if cells is None:
             continue
-        if len(cells) < 8:
+        if len(cells) != AB_SCORE_ROW_COLUMN_COUNT:
             case = cells[0] if cells else "<unknown>"
             errors.append(f"{relative}: malformed score row for {case}")
             continue
