@@ -516,6 +516,15 @@ def valid_judge_payload(case_id: str = "checkout-cache-as-truth") -> dict:
 
 
 class DdiaBenchmarkTest(unittest.TestCase):
+    def test_readme_mentions_coding_ab_benchmark(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        guide = (REPO / "evaluation/benchmark-guide.md").read_text(encoding="utf-8")
+
+        self.assertIn("Coding A/B Result", readme)
+        self.assertIn("evaluation/coding-ab", readme)
+        self.assertIn("coding A/B", guide)
+        self.assertIn("Java patch", guide)
+
     def test_coding_ab_judge_dimensions_match_payload_schema(self):
         checker = load_checker()
 

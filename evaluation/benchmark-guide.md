@@ -15,6 +15,19 @@ Use this benchmark to verify whether the `ddia-system-design` skill improves bac
 7. Fill in every score, pass decision, regression note, and recommended skill change.
 8. Compare the new result with the previous result file.
 
+## How To Run Coding A/B
+
+1. Pick a Java patch case from `evaluation/coding-ab/cases/`.
+2. Generate a control patch with `evaluation/coding-ab/control-instructions.md`.
+3. Generate a treatment patch with `evaluation/coding-ab/treatment-instructions.md`.
+4. Randomize both patches as Response A and Response B.
+5. Score both patches with `evaluation/coding-ab/blind-llm-judge.md`.
+6. Preserve the raw patches and judge JSON in a copy of `evaluation/coding-ab/results-template.md`.
+
+The coding A/B track does not require compiling Java. The judge scores whether
+the patch moves correctness into the right source-of-truth, transaction,
+idempotency, retry, and verification boundaries.
+
 ## How To Score
 
 Good cases use five answer-quality dimensions for a maximum score of 10. A good case passes at 8 or higher with no zero dimensions.

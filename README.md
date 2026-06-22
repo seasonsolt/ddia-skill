@@ -95,6 +95,26 @@ notes, and mapping are preserved in
 [`evaluation/ab/pilot-results.md`](evaluation/ab/pilot-results.md) so another
 evaluator can rescore the run.
 
+## Coding A/B Result
+
+The next benchmark track uses Java code-review patches instead of architecture
+prose. Each case gives the model flawed Java code, then compares a control
+patch against a treatment patch that uses `ddia-system-design`.
+
+The coding A/B benchmark focuses on concrete implementation boundaries:
+
+- source-of-truth decisions
+- transaction and outbox placement
+- idempotency and retry safety
+- replica-lag read routing
+- distributed-lock failure modes
+
+The first coding A/B assets live in
+[`evaluation/coding-ab`](evaluation/coding-ab). The Java code snippets are
+scored by a blind LLM judge rubric and do not need to compile. This track is
+intended to produce stronger evidence than prose-only scoring because it checks
+whether the skill changes the code boundary, not only the explanation.
+
 ## Benchmark Suite
 
 The repository also includes a repeatable benchmark for future skill changes.
@@ -141,7 +161,7 @@ Current validation status:
 
 - The bundled Python unit suite passes.
 - `check_ddia_skill_quality.py` reports no missing files, terms, invalid files, or structure errors.
-- `check_ddia_benchmark.py` reports `good: 5`, `bad: 4`, `adversarial: 4`, with no benchmark errors.
+- `check_ddia_benchmark.py` reports `good: 5`, `bad: 4`, `adversarial: 4`, with no benchmark or coding A/B errors.
 
 ## Install Locally
 
@@ -165,6 +185,7 @@ evaluation/results.md           First evaluation result record
 evaluation/cases/               Good, bad, and adversarial benchmark cases
 evaluation/rubrics/             Answer-quality and process-compliance rubrics
 evaluation/ab/                  A/B instructions, template, and pilot result
+evaluation/coding-ab/          Java patch A/B benchmark and LLM judge rubric
 scripts/                        Extraction and validation helpers
 tests/                          Deterministic unit tests
 analysis/                       Original reading ledger
