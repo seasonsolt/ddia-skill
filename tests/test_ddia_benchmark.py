@@ -102,6 +102,22 @@ EXPANDED_CASES = {
 }
 
 
+COVERAGE_MATRIX = """The benchmark intentionally covers these DDIA-style backend design behaviors:
+
+- Source-of-truth and derived-data boundaries: `good/01-order-consistency.md`, `bad/01-cache-as-truth.md`, `good/05-derived-data.md`
+- Event pipeline correctness: `good/02-event-pipeline.md`, `good/11-idempotency-outbox.md`, `adversarial/02-exactly-once-trap.md`
+- Storage and database choice: `good/03-database-choice.md`
+- Schema evolution and compatibility: `good/08-schema-evolution-rollout.md`, `adversarial/04-schema-evolution-trap.md`
+- Replication and consistency: `good/04-replica-lag.md`, `bad/02-replica-lag-denial.md`, `adversarial/05-global-linearizable-writes.md`
+- Partitioning and hot spots: `bad/03-hot-partition.md`
+- Transactions, coordination, and consensus: `adversarial/03-distributed-lock-trap.md`
+- Quantitative workload and cost reasoning: `good/06-quantitative-workload-capacity.md`, `bad/05-capacity-cost-handwave.md`
+- Batch/backfill and reconciliation: `good/07-batch-backfill-reconciliation.md`
+- Correct cache use: `good/09-correct-cache-use.md`
+- Observability and operations: `good/10-observability-runbook.md`
+- Ambiguous requirements and requirement discovery: `bad/04-vague-startup-architecture.md`, `adversarial/01-tool-first-trap.md`"""
+
+
 BASE_CASES = [
     (
         "evaluation/cases/good/01-order-consistency.md",
@@ -244,7 +260,7 @@ def make_complete_benchmark(root: pathlib.Path) -> None:
     )
     write(
         root / "evaluation/benchmark-guide.md",
-        """# DDIA Skill Benchmark Guide
+        f"""# DDIA Skill Benchmark Guide
 
 ## Purpose
 
@@ -252,7 +268,7 @@ Use this benchmark to prove usefulness and drive iteration.
 
 ## Coverage Matrix
 
-- Source-of-truth and derived-data boundaries
+{COVERAGE_MATRIX}
 
 ## How To Run
 
@@ -496,7 +512,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             guide_path = repo / "evaluation/benchmark-guide.md"
             guide_path.write_text(
                 guide_path.read_text(encoding="utf-8").replace(
-                    "## Coverage Matrix\n\n- Source-of-truth and derived-data boundaries\n\n",
+                    f"## Coverage Matrix\n\n{COVERAGE_MATRIX}\n\n",
                     "",
                 ),
                 encoding="utf-8",
@@ -506,6 +522,93 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
         self.assertIn(
             "evaluation/benchmark-guide.md: missing section Coverage Matrix",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_missing_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    "`good/11-idempotency-outbox.md`",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix missing case good/11-idempotency-outbox.md",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_unknown_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    "`good/03-database-choice.md`",
+                    "`good/03-database-choice.md`, `good/99-unknown.md`",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix unknown case good/99-unknown.md",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_duplicate_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    "`good/03-database-choice.md`",
+                    "`good/03-database-choice.md`, `good/03-database-choice.md`",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix duplicates case good/03-database-choice.md",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_wrong_topic(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_text = guide_path.read_text(encoding="utf-8")
+            guide_text = guide_text.replace(
+                "- Partitioning and hot spots: `bad/03-hot-partition.md`",
+                "- Partitioning and hot spots: `bad/03-hot-partition.md`, `adversarial/03-distributed-lock-trap.md`",
+            )
+            guide_text = guide_text.replace(
+                "- Transactions, coordination, and consensus: `adversarial/03-distributed-lock-trap.md`",
+                "- Transactions, coordination, and consensus:",
+            )
+            guide_path.write_text(guide_text, encoding="utf-8")
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix must list adversarial/03-distributed-lock-trap.md under Transactions, coordination, and consensus",
             report["guide_errors"],
         )
 

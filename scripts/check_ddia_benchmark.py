@@ -84,6 +84,13 @@ GUIDE_SECTIONS = [
     "How To Score",
     "Regression Review",
 ]
+COVERAGE_MATRIX_TOPIC_REQUIREMENTS = {
+    "good/03-database-choice.md": "Storage and database choice",
+    "good/08-schema-evolution-rollout.md": "Schema evolution and compatibility",
+    "adversarial/04-schema-evolution-trap.md": "Schema evolution and compatibility",
+    "bad/03-hot-partition.md": "Partitioning and hot spots",
+    "adversarial/03-distributed-lock-trap.md": "Transactions, coordination, and consensus",
+}
 
 RUBRIC_FILES = {
     "evaluation/rubrics/answer-quality.md": ANSWER_QUALITY_DIMENSIONS,
@@ -206,6 +213,11 @@ AB_CONTROL_BANNED_PHRASES = [
 
 def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def required_case_refs() -> set[str]:
+    prefix = pathlib.Path("evaluation/cases")
+    return {case.relative_to(prefix).as_posix() for paths in REQUIRED_CASE_FILES.values() for case in paths}
 
 
 def section_body(text: str, heading: str) -> str | None:
@@ -480,6 +492,51 @@ def validate_required_sections(path: pathlib.Path, relative: str, sections: list
     return errors
 
 
+def parse_coverage_matrix_refs(text: str) -> dict[str, list[str]]:
+    matrix_body = section_body(text, "Coverage Matrix") or ""
+    matrix_refs: dict[str, list[str]] = {}
+
+    for line in matrix_body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- ") or ":" not in stripped:
+            continue
+
+        topic, refs_text = stripped[2:].split(":", 1)
+        matrix_refs.setdefault(topic.strip(), []).extend(re.findall(r"`([^`]+)`", refs_text))
+
+    return matrix_refs
+
+
+def validate_coverage_matrix(path: pathlib.Path, relative: str) -> list[str]:
+    text = read_text(path)
+    if section_body(text, "Coverage Matrix") is None:
+        return []
+
+    errors: list[str] = []
+    expected_refs = required_case_refs()
+    refs_by_topic = parse_coverage_matrix_refs(text)
+    ref_counts: dict[str, int] = {}
+
+    for refs in refs_by_topic.values():
+        for ref in refs:
+            ref_counts[ref] = ref_counts.get(ref, 0) + 1
+
+    for ref in sorted(expected_refs):
+        if ref_counts.get(ref, 0) == 0:
+            errors.append(f"{relative}: coverage matrix missing case {ref}")
+        elif ref_counts[ref] > 1:
+            errors.append(f"{relative}: coverage matrix duplicates case {ref}")
+
+    for ref in sorted(ref for ref in ref_counts if ref not in expected_refs):
+        errors.append(f"{relative}: coverage matrix unknown case {ref}")
+
+    for ref, topic in sorted(COVERAGE_MATRIX_TOPIC_REQUIREMENTS.items()):
+        if ref not in refs_by_topic.get(topic, []):
+            errors.append(f"{relative}: coverage matrix must list {ref} under {topic}")
+
+    return errors
+
+
 def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
     missing_paths: list[str] = []
     errors: list[str] = []
@@ -591,6 +648,7 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
         missing_paths.append(GUIDE_PATH)
     else:
         guide_errors.extend(validate_required_sections(guide_path, GUIDE_PATH, GUIDE_SECTIONS))
+        guide_errors.extend(validate_coverage_matrix(guide_path, GUIDE_PATH))
 
     ab_missing_paths, ab_errors = validate_ab_assets(repo)
     missing_paths.extend(ab_missing_paths)
