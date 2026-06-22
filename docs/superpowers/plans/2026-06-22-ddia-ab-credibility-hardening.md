@@ -14,6 +14,34 @@
 
 This plan implements one focused subsystem: A/B credibility hardening. It does not add new benchmark cases, run a new repeated A/B study, change the installed skill behavior, add automated LLM judging, or refactor private PDF/reading tools.
 
+## Deferred Gaps
+
+These gaps are intentionally kept out of this plan and should be addressed in follow-up passes:
+
+- Benchmark coverage gaps:
+  - quantitative workload and capacity planning with explicit rates, data size, and growth assumptions
+  - consensus or multi-region correctness and availability trade-offs
+  - batch processing and backfill behavior
+  - database schema evolution (expand-contract, online migration, backfill, rollback)
+  - correct cache-use case design
+  - observability/runbook-focused case
+  - idempotency and outbox/inbox case design
+  - capacity/cost stress case
+- Skill gaps:
+  - clarify packaging necessity for `skills/ddia-system-design/agents/openai.yaml`
+  - add worked examples in `SKILL.md`
+  - add a narrow follow-up exemption for small questions
+  - define explicit off-topic boundaries
+  - reduce repeated concept duplication across reference files
+- Test infrastructure gaps:
+  - add behavior-oriented regression evidence
+  - make `prompt_count == 5` handling explicit and less brittle
+  - revisit heading-coupling strictness in regression guards
+  - cover `skills/ddia-system-design/agents/openai.yaml` in tests if retained
+  - split reading/PDF extraction coverage from skill behavior checks
+  - document relation between `evaluation/rubric.md` and `evaluation/rubrics/answer-quality.md`
+  - remove hardcoded PDF path fallback behavior
+
 ## File Structure
 
 - Modify: `/Users/Thin/Documents/ddia/evaluation/ab/control-instructions.md`
@@ -950,4 +978,3 @@ Expected: push succeeds to `git@github.com:seasonsolt/ddia-skill.git`.
 - The checker validates arithmetic drift and required limitation terms.
 - README wording reports a single paired pilot observation, not statistical proof.
 - Every task has concrete commands and expected outcomes.
-
