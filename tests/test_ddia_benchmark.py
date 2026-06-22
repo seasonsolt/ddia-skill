@@ -652,6 +652,49 @@ Preserve Response A and Response B for every coding case.
         )
 
 
+EXPECTED_EXPANDED_CODING_AB_CASES = {
+    "good-cache-aside-product-preview": "good",
+    "good-outbox-relay-idempotent-consumer": "good",
+    "good-replica-session-token-routing": "good",
+    "good-expand-contract-schema-rollout": "good",
+    "checkout-cache-as-truth": "bad",
+    "order-outbox-missing": "bad",
+    "profile-replica-lag": "bad",
+    "seat-booking-write-skew": "bad",
+    "schema-migration-breaking-reader": "bad",
+    "stream-consumer-non-idempotent": "bad",
+    "hot-partition-tenant-counter": "bad",
+    "retry-storm-no-dlq": "bad",
+    "missing-reconciliation-observability": "bad",
+    "payment-exactly-once-trap": "adversarial",
+    "redis-distributed-lock-money-transfer": "adversarial",
+    "multi-region-last-write-wins-profile": "adversarial",
+    "elasticsearch-authorization-trap": "adversarial",
+    "kafka-total-ordering-trap": "adversarial",
+}
+
+
+EXPECTED_CODING_COVERAGE_TOPICS = {
+    "Correct cache use",
+    "Source-of-truth boundary",
+    "Transactional outbox",
+    "Idempotent consumer",
+    "Read-your-writes",
+    "Replica lag",
+    "Isolation and write skew",
+    "Schema evolution",
+    "Stream replay and duplicate delivery",
+    "Partitioning and hot keys",
+    "Backpressure and poison messages",
+    "Observability and reconciliation",
+    "External side effects",
+    "Distributed locks and fencing",
+    "Multi-region conflict resolution",
+    "Derived data authorization",
+    "Ordering guarantees",
+}
+
+
 def valid_judge_payload(case_id: str = "checkout-cache-as-truth") -> dict:
     scores = {
         "correctness_invariant": 2,
@@ -730,6 +773,33 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
         self.assertEqual(missing_paths, [])
         self.assertEqual(coding_ab_errors, [])
+
+    def test_coding_ab_case_registry_covers_expanded_suite(self):
+        checker = load_checker()
+
+        self.assertEqual(checker.CODING_AB_CASES, EXPECTED_EXPANDED_CODING_AB_CASES)
+        self.assertEqual(checker.CODING_AB_EXPECTED_CATEGORY_COUNTS, {"good": 4, "bad": 9, "adversarial": 5})
+
+    def test_coding_ab_coverage_matrix_covers_required_topics(self):
+        checker = load_checker()
+        matrix_path = REPO / "evaluation" / "coding-ab" / "coverage-matrix.md"
+        matrix_text = matrix_path.read_text(encoding="utf-8")
+
+        for case_id in EXPECTED_EXPANDED_CODING_AB_CASES:
+            self.assertIn(f"`{case_id}`", matrix_text)
+
+        for topic in EXPECTED_CODING_COVERAGE_TOPICS:
+            self.assertIn(topic, matrix_text)
+
+        missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(REPO)
+        self.assertEqual(missing_paths, [])
+        self.assertEqual(coding_ab_errors, [])
+
+    def test_coding_ab_results_template_has_every_case_row(self):
+        template = (REPO / "evaluation" / "coding-ab" / "results-template.md").read_text(encoding="utf-8")
+
+        for case_id in EXPECTED_EXPANDED_CODING_AB_CASES:
+            self.assertIn(f"| {case_id} |", template)
 
     def test_checker_accepts_complete_benchmark(self):
         checker = load_checker()
