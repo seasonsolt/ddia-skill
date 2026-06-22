@@ -1,6 +1,9 @@
 # Architecture Review Checklists
 
-Use these checklists when reviewing a backend design, system design answer, architecture document, or production migration.
+Use these checklists when reviewing a backend design, system design answer,
+architecture document, or production migration. Every item is a question to ask
+of the design, not a rule to follow. For decision rules see
+`system-design-principles.md`; for problem-to-lens mapping see `topic-map.md`.
 
 ## Workload Checklist
 

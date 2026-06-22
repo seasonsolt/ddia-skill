@@ -21,6 +21,11 @@ The treatment arm uses `ddia-system-design` and may follow its response shape. T
 
 ## Pilot Case Set
 
+The pilot is frozen at the five cases below so the preserved paired responses
+and scores stay comparable across runs. The benchmark has since expanded to
+twenty-one cases; those newer cases are reserved for the repeated-run study
+described in `## Repeated-Run Protocol` rather than this frozen pilot.
+
 - `evaluation/cases/good/01-order-consistency.md`
 - `evaluation/cases/good/04-replica-lag.md`
 - `evaluation/cases/bad/01-cache-as-truth.md`

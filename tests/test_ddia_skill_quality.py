@@ -247,17 +247,86 @@ class DdiaSkillQualityTest(unittest.TestCase):
         self.assertTrue(any("evaluation/rubric.md" in item for item in report["invalid_files"]))
         self.assertTrue(any("evaluation/prompts/01-order-consistency.md" in item for item in report["invalid_files"]))
 
-    def test_quality_checker_reports_wrong_prompt_count_for_extra_prompt(self):
+    def test_quality_checker_accepts_extra_prompt_above_minimum(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_repo(repo)
-            write(repo / "evaluation/prompts/99-extra.md", "# Prompt 99: Extra\n\nUse the DDIA system design skill.\n")
+            write(
+                repo / "evaluation/prompts/99-extra.md",
+                """# Prompt 99: Extra
+
+Use the DDIA system design skill to review another backend architecture scenario with enough context to evaluate workload, trade-offs, failure modes, correctness, and verification value.
+""",
+            )
+            template_path = repo / "evaluation/results-template.md"
+            template_path.write_text(
+                template_path.read_text(encoding="utf-8").replace(
+                    "## Overall Decision",
+                    """## Prompt 99: Extra
+
+- Workload framing:
+- Trade-off quality:
+- Failure-mode coverage:
+- Correctness reasoning:
+- Verification value:
+- Total score:
+- Pass:
+- Notes:
+
+## Overall Decision""",
+                ),
+                encoding="utf-8",
+            )
 
             report = checker.check_repo(repo)
 
         self.assertEqual(report["prompt_count"], 6)
-        self.assertTrue(any("expected 5 prompt files" in item for item in report["structure_errors"]))
+        self.assertEqual(report["invalid_files"], [])
+        self.assertEqual(report["structure_errors"], [])
+
+    def test_quality_checker_rejects_extra_prompt_without_result_section(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_repo(repo)
+            write(
+                repo / "evaluation/prompts/99-extra.md",
+                """# Prompt 99: Extra
+
+Use the DDIA system design skill to review another backend architecture scenario with enough context to evaluate workload, trade-offs, failure modes, correctness, and verification value.
+""",
+            )
+
+            report = checker.check_repo(repo)
+
+        self.assertEqual(report["prompt_count"], 6)
+        self.assertTrue(any("evaluation/results-template.md: missing Prompt 99: Extra" in item for item in report["invalid_files"]))
+
+    def test_quality_checker_rejects_malformed_extra_prompt(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_repo(repo)
+            write(repo / "evaluation/prompts/99-extra.md", "# Extra\n\nUse the DDIA system design skill.\n")
+
+            report = checker.check_repo(repo)
+
+        self.assertEqual(report["prompt_count"], 6)
+        self.assertTrue(any("evaluation/prompts/99-extra.md: missing heading # Prompt N:" in item for item in report["invalid_files"]))
+        self.assertTrue(any("evaluation/prompts/99-extra.md: content is too short" in item for item in report["invalid_files"]))
+
+    def test_quality_checker_rejects_fewer_than_five_prompts(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_repo(repo)
+            (repo / "evaluation/prompts/05-derived-data.md").unlink()
+
+            report = checker.check_repo(repo)
+
+        self.assertEqual(report["prompt_count"], 4)
+        self.assertTrue(any("expected at least 5 prompt files" in item for item in report["structure_errors"]))
 
     def test_quality_checker_reports_missing_term_and_reference_structure(self):
         checker = load_checker()

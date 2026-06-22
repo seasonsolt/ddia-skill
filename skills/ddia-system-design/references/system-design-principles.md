@@ -1,6 +1,8 @@
 # System Design Principles
 
-These principles are original engineering guidance extracted from DDIA reading notes.
+These principles are original engineering decision rules extracted from DDIA
+reading notes. They state what to do and why. For problem-to-lens mapping see
+`topic-map.md`; for review questions see `architecture-review-checklists.md`.
 
 ## Start With Workload Shape
 

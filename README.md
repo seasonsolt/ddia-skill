@@ -101,11 +101,11 @@ evaluator can rescore the run.
 ## Benchmark Suite
 
 The repository also includes a repeatable benchmark for future skill changes.
-It has 13 cases:
+It has 21 cases:
 
-- 5 good cases in [`evaluation/cases/good`](evaluation/cases/good)
-- 4 bad cases in [`evaluation/cases/bad`](evaluation/cases/bad)
-- 4 adversarial cases in [`evaluation/cases/adversarial`](evaluation/cases/adversarial)
+- 11 good cases in [`evaluation/cases/good`](evaluation/cases/good)
+- 5 bad cases in [`evaluation/cases/bad`](evaluation/cases/bad)
+- 5 adversarial cases in [`evaluation/cases/adversarial`](evaluation/cases/adversarial)
 
 Good cases check whether the skill can answer normal architecture questions.
 Bad and adversarial cases test whether it resists unsafe premises such as:
@@ -131,7 +131,9 @@ benchmark pass and record results in
 
 ## Validation
 
-Run the deterministic checks from the repository root:
+Run the deterministic checks from the repository root. The checkers use
+`str | None` union syntax and require Python 3.10 or newer; the codex runtime
+below provides Python 3.12.13.
 
 ```bash
 PYTHON=/Users/Thin/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
@@ -144,7 +146,7 @@ Current validation status:
 
 - The bundled Python unit suite passes.
 - `check_ddia_skill_quality.py` reports no missing files, terms, invalid files, or structure errors.
-- `check_ddia_benchmark.py` reports `good: 5`, `bad: 4`, `adversarial: 4`, with no benchmark errors.
+- `check_ddia_benchmark.py` reports `good: 11`, `bad: 5`, `adversarial: 5`, with no benchmark errors.
 
 ## Install Locally
 

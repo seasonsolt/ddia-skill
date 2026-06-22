@@ -47,6 +47,20 @@ class DdiaSkillContentTest(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"(?m)^-\s*$", text), f"Empty bullet in {path}")
 
+    def test_openai_yaml_declares_codex_agent_interface(self):
+        yaml_path = SKILL / "agents" / "openai.yaml"
+        text = yaml_path.read_text(encoding="utf-8")
+        self.assertIn("Codex skill agent interface", text)
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not available")
+        data = yaml.safe_load(text)
+        interface = data.get("interface", {})
+        self.assertEqual(interface.get("display_name"), "DDIA System Design")
+        self.assertTrue(interface.get("short_description"))
+        self.assertTrue(interface.get("default_prompt"))
+
 
 if __name__ == "__main__":
     unittest.main()
