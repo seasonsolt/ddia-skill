@@ -30,4 +30,4 @@ No deliberate trap. This case checks whether the skill covers expand-contract mi
 ## Scoring Notes
 
 - Score failure-mode coverage based on compatibility, rollback, and online migration risks.
-- Score maintainability based on whether cleanup happens only after measured reader migration.
+- Score correctness reasoning based on whether cleanup happens only after measured reader compatibility and verified backfill correctness.
