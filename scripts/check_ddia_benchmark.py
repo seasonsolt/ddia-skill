@@ -60,6 +60,60 @@ RUBRIC_FILES = {
 }
 RESULT_TEMPLATE_PATH = "evaluation/results/template.md"
 GUIDE_PATH = "evaluation/benchmark-guide.md"
+AB_REQUIRED_FILES = [
+    "evaluation/ab/README.md",
+    "evaluation/ab/control-instructions.md",
+    "evaluation/ab/treatment-instructions.md",
+    "evaluation/ab/blind-scoring-guide.md",
+    "evaluation/ab/results-template.md",
+    "evaluation/ab/pilot-results.md",
+]
+
+AB_README_SECTIONS = ["Purpose", "Method", "Pilot Case Set", "Limitations"]
+AB_BLIND_SCORING_SECTIONS = ["Scoring Order", "Mapping Reveal"]
+AB_RESULT_SECTIONS = [
+    "Run Metadata",
+    "Hidden Mapping",
+    "Case Scores",
+    "Dimension Differences",
+    "Response Archive",
+    "Overall Decision",
+]
+AB_PILOT_CASES = [
+    "evaluation/cases/good/01-order-consistency.md",
+    "evaluation/cases/good/04-replica-lag.md",
+    "evaluation/cases/bad/01-cache-as-truth.md",
+    "evaluation/cases/adversarial/02-exactly-once-trap.md",
+    "evaluation/cases/bad/04-vague-startup-architecture.md",
+]
+AB_REQUIRED_PHRASES = {
+    "evaluation/ab/README.md": ["control", "treatment", "pilot", "not statistical proof"],
+    "evaluation/ab/control-instructions.md": [
+        "without using or referencing ddia-system-design",
+        "Do not load, invoke, mention, or rely on the DDIA system design skill",
+    ],
+    "evaluation/ab/treatment-instructions.md": [
+        "Use ddia-system-design",
+        "assumptions, recommendation, trade-offs, failure modes, correctness, operations, and tests",
+    ],
+    "evaluation/ab/blind-scoring-guide.md": [
+        "Score Response A and Response B before revealing",
+        "Reveal the mapping only after",
+    ],
+    "evaluation/ab/results-template.md": [
+        "Control score",
+        "Treatment score",
+        "Lift",
+        "Pass/fail change",
+        "Response Archive",
+    ],
+    "evaluation/ab/pilot-results.md": [
+        "Total control score:",
+        "Total treatment score:",
+        "Total lift:",
+        "not statistical proof",
+    ],
+}
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -161,6 +215,62 @@ def validate_required_sections(path: pathlib.Path, relative: str, sections: list
         if not has_markdown_section(text, section):
             errors.append(f"{relative}: missing section {section}")
     return errors
+
+
+def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
+    missing_paths: list[str] = []
+    errors: list[str] = []
+
+    for relative in AB_REQUIRED_FILES:
+        path = repo / relative
+        text = read_text(path)
+        if not path.exists():
+            missing_paths.append(relative)
+            continue
+        if not text.strip():
+            errors.append(f"{relative}: file is empty")
+            continue
+        for phrase in AB_REQUIRED_PHRASES.get(relative, []):
+            if phrase not in text:
+                errors.append(f"{relative}: missing phrase {phrase}")
+
+    readme = repo / "evaluation/ab/README.md"
+    if readme.exists():
+        errors.extend(validate_required_sections(readme, "evaluation/ab/README.md", AB_README_SECTIONS))
+
+    blind = repo / "evaluation/ab/blind-scoring-guide.md"
+    if blind.exists():
+        errors.extend(
+            validate_required_sections(blind, "evaluation/ab/blind-scoring-guide.md", AB_BLIND_SCORING_SECTIONS)
+        )
+
+    template = repo / "evaluation/ab/results-template.md"
+    if template.exists():
+        errors.extend(validate_required_sections(template, "evaluation/ab/results-template.md", AB_RESULT_SECTIONS))
+
+    pilot = repo / "evaluation/ab/pilot-results.md"
+    if pilot.exists():
+        pilot_text = read_text(pilot)
+        errors.extend(validate_required_sections(pilot, "evaluation/ab/pilot-results.md", AB_RESULT_SECTIONS))
+        for case in AB_PILOT_CASES:
+            if case not in pilot_text:
+                errors.append(f"evaluation/ab/pilot-results.md: missing pilot case {case}")
+        for score_label in ["Control score", "Treatment score", "Lift", "Pass/fail change", "Notes"]:
+            if score_label not in pilot_text:
+                errors.append(f"evaluation/ab/pilot-results.md: missing score column {score_label}")
+
+    control_text = read_text(repo / "evaluation/ab/control-instructions.md")
+    if control_text and (
+        "without using or referencing ddia-system-design" not in control_text
+        or "Do not load, invoke, mention, or rely on the DDIA system design skill" not in control_text
+    ):
+        errors.append("evaluation/ab/control-instructions.md: must forbid using ddia-system-design")
+
+    treatment_text = read_text(repo / "evaluation/ab/treatment-instructions.md")
+    if treatment_text and "Use ddia-system-design" not in treatment_text:
+        errors.append("evaluation/ab/treatment-instructions.md: must require using ddia-system-design")
+
+    return missing_paths, errors
 
 
 def check_benchmark(repo: pathlib.Path) -> dict[str, object]:

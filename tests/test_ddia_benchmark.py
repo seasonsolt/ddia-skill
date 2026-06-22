@@ -152,6 +152,162 @@ Compare the new results against the previous benchmark result.
     )
 
 
+AB_REQUIRED_FILES = [
+    "evaluation/ab/README.md",
+    "evaluation/ab/control-instructions.md",
+    "evaluation/ab/treatment-instructions.md",
+    "evaluation/ab/blind-scoring-guide.md",
+    "evaluation/ab/results-template.md",
+    "evaluation/ab/pilot-results.md",
+]
+
+
+def make_complete_ab_assets(root: pathlib.Path) -> None:
+    write(
+        root / "evaluation/ab/README.md",
+        """# DDIA Skill A/B Evaluation
+
+## Purpose
+
+Compare control responses without ddia-system-design against treatment responses with ddia-system-design.
+
+## Method
+
+Run the same cases with the same model, score Response A and Response B, then reveal the mapping.
+
+## Pilot Case Set
+
+- evaluation/cases/good/01-order-consistency.md
+- evaluation/cases/good/04-replica-lag.md
+- evaluation/cases/bad/01-cache-as-truth.md
+- evaluation/cases/adversarial/02-exactly-once-trap.md
+- evaluation/cases/bad/04-vague-startup-architecture.md
+
+## Limitations
+
+This is pilot A/B evidence, not statistical proof.
+""",
+    )
+    write(
+        root / "evaluation/ab/control-instructions.md",
+        """# Control Instructions
+
+Answer the benchmark case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill.
+""",
+    )
+    write(
+        root / "evaluation/ab/treatment-instructions.md",
+        """# Treatment Instructions
+
+Use ddia-system-design for the benchmark case.
+
+Follow the ddia-system-design response shape: assumptions, recommendation, trade-offs, failure modes, correctness, operations, and tests.
+""",
+    )
+    write(
+        root / "evaluation/ab/blind-scoring-guide.md",
+        """# Blind Scoring Guide
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded.
+""",
+    )
+    write(
+        root / "evaluation/ab/results-template.md",
+        """# DDIA Skill A/B Results Template
+
+## Run Metadata
+
+- Evaluator:
+- Date:
+- Model:
+- Skill version:
+
+## Hidden Mapping
+
+- Response A:
+- Response B:
+
+## Case Scores
+
+| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+
+## Dimension Differences
+
+Record workload framing, trade-off quality, failure-mode coverage, correctness reasoning, verification value, and anti-pattern resistance differences.
+
+## Response Archive
+
+Preserve Response A and Response B for every case.
+
+## Overall Decision
+
+- Total control score:
+- Total treatment score:
+- Total lift:
+- Limitations:
+""",
+    )
+    write(
+        root / "evaluation/ab/pilot-results.md",
+        """# DDIA Skill Pilot A/B Results
+
+## Run Metadata
+
+- Evaluator: Codex
+- Date: 2026-06-22
+- Model: GPT-5 Codex
+- Skill version: local pilot
+
+## Pilot Case Coverage
+
+- evaluation/cases/good/01-order-consistency.md
+- evaluation/cases/good/04-replica-lag.md
+- evaluation/cases/bad/01-cache-as-truth.md
+- evaluation/cases/adversarial/02-exactly-once-trap.md
+- evaluation/cases/bad/04-vague-startup-architecture.md
+
+## Hidden Mapping
+
+- Response A: control
+- Response B: treatment
+
+## Case Scores
+
+| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| order-consistency | good | 7 | 9 | +2 | fail to pass | Treatment added stronger verification and failure-mode reasoning. |
+| replica-lag | good | 7 | 10 | +3 | fail to pass | Treatment named read-your-writes and monotonic reads. |
+| cache-as-truth | bad | 8 | 11 | +3 | fail to pass | Treatment rejected Redis as source of truth. |
+| exactly-once-trap | adversarial | 8 | 11 | +3 | fail to pass | Treatment challenged end-to-end exactly-once. |
+| vague-startup-architecture | bad | 8 | 10 | +2 | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |
+
+## Dimension Differences
+
+Treatment improved correctness reasoning, verification value, and anti-pattern resistance across the pilot cases.
+
+## Response Archive
+
+Responses are preserved under each case section in this file.
+
+## Overall Decision
+
+- Total control score: 38
+- Total treatment score: 51
+- Total lift: +13
+- Limitations: This is a five-case pilot scored from preserved paired responses. It is not statistical proof.
+""",
+    )
+
+
 class DdiaBenchmarkTest(unittest.TestCase):
     def test_current_repo_benchmark_is_complete(self):
         checker = load_checker()
@@ -253,6 +409,73 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertIn(
             "evaluation/rubrics/answer-quality.md: missing dimension Anti-pattern resistance",
             report["rubric_errors"],
+        )
+
+    def test_checker_accepts_complete_ab_assets(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(ab_errors, [])
+        self.assertEqual(missing_paths, [])
+
+    def test_checker_reports_missing_ab_file(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            (repo / "evaluation/ab/pilot-results.md").unlink()
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(ab_errors, [])
+        self.assertIn("evaluation/ab/pilot-results.md", missing_paths)
+
+    def test_checker_rejects_control_instructions_that_allow_skill(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            write(
+                repo / "evaluation/ab/control-instructions.md",
+                "# Control Instructions\n\nUse ddia-system-design for the answer.\n",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/control-instructions.md: must forbid using ddia-system-design",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_missing_selected_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "- evaluation/cases/bad/01-cache-as-truth.md\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing pilot case evaluation/cases/bad/01-cache-as-truth.md",
+            ab_errors,
         )
 
 
