@@ -78,20 +78,23 @@ The repository now includes a five-case pilot A/B evaluation. It compares the
 same model answering selected benchmark cases without the skill against the
 same model answering with `ddia-system-design`.
 
-Pilot result:
+Pilot observation from one paired run:
 
 - Control total: 38
 - Treatment total: 51
-- Lift: +13 points across 5 cases
-- Pass-rate change: treatment moved four must-pass cases from fail to pass
+- Raw lift: +13 points across 5 cases
+- Mean normalized lift: +23.3 percentage points
+- Pass-threshold observation: four must-pass cases crossed the pass threshold in this run
 
-The strongest gains came from correctness reasoning, verification value, and
+The strongest observed gains came from correctness reasoning, verification value, and
 anti-pattern resistance. The treatment responses challenged unsafe premises
 more directly, including Redis-as-payment-truth and end-to-end exactly-once
 claims.
 
-This is pilot A/B evidence, not statistical proof. The response text, scoring
-notes, and mapping are preserved in
+This is directional pilot A/B evidence, not statistical proof. The run has
+self-evaluation bias, response-shape/rubric alignment risk, a single model, a
+single response per arm, no variance estimate, and non-random case selection.
+The response text, scoring notes, and mapping are preserved in
 [`evaluation/ab/pilot-results.md`](evaluation/ab/pilot-results.md) so another
 evaluator can rescore the run.
 

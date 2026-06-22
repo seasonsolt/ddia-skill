@@ -185,7 +185,9 @@ Run the same cases with the same model, score Response A and Response B, then re
 
 ## Limitations
 
-This is pilot A/B evidence, not statistical proof.
+This is pilot A/B evidence, not statistical proof. The current pilot has self-evaluation bias, response-shape/rubric alignment risk, a single model, a single run per arm, no variance estimate, non-random case selection, and no repeated runs. It also scores answer quality only; it does not score the process-compliance rubric.
+
+A stronger study would use independent blinded scoring, repeated randomized runs, and more than one model.
 """,
     )
     write(
@@ -195,6 +197,8 @@ This is pilot A/B evidence, not statistical proof.
 Answer the benchmark case without using or referencing ddia-system-design.
 
 Do not load, invoke, mention, or rely on the DDIA system design skill.
+
+Use your general backend architecture knowledge. Use whatever clear answer structure you normally would for a backend architecture review.
 """,
     )
     write(
@@ -213,6 +217,8 @@ Follow the ddia-system-design response shape: assumptions, recommendation, trade
 ## Scoring Order
 
 Score Response A and Response B before revealing which response is control or treatment.
+
+Score the substance of the answer, not the mere presence of headings. A response should earn points when it actually explains workload, trade-offs, failure modes, correctness, and verification.
 
 ## Mapping Reveal
 
@@ -237,8 +243,8 @@ Reveal the mapping only after all dimensions, notes, and pass decisions are reco
 
 ## Case Scores
 
-| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
+| Case | Category | Control score | Treatment score | Lift | Control normalized | Treatment normalized | Normalized lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 ## Dimension Differences
 
@@ -248,12 +254,24 @@ Record workload framing, trade-off quality, failure-mode coverage, correctness r
 
 Preserve Response A and Response B for every case.
 
+## Limitations
+
+- Self-evaluation bias:
+- Response-shape/rubric alignment:
+- Single model:
+- Single run:
+- No variance estimate:
+- Non-random case selection:
+- Process-compliance rubric not scored:
+
 ## Overall Decision
 
 - Total control score:
 - Total treatment score:
 - Total lift:
-- Limitations:
+- Mean normalized control:
+- Mean normalized treatment:
+- Mean normalized lift:
 """,
     )
     write(
@@ -282,13 +300,13 @@ Preserve Response A and Response B for every case.
 
 ## Case Scores
 
-| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| order-consistency | good | 7 | 9 | +2 | fail to pass | Treatment added stronger verification and failure-mode reasoning. |
-| replica-lag | good | 7 | 10 | +3 | fail to pass | Treatment named read-your-writes and monotonic reads. |
-| cache-as-truth | bad | 8 | 11 | +3 | fail to pass | Treatment rejected Redis as source of truth. |
-| exactly-once-trap | adversarial | 8 | 11 | +3 | fail to pass | Treatment challenged end-to-end exactly-once. |
-| vague-startup-architecture | bad | 8 | 10 | +2 | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |
+| Case | Category | Control score | Treatment score | Lift | Control normalized | Treatment normalized | Normalized lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |
+| replica-lag | good | 7/10 | 10/10 | +3 | 70.0% | 100.0% | +30.0 pp | fail to pass | Treatment named read-your-writes and monotonic reads. |
+| cache-as-truth | bad | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment rejected Redis as source of truth. |
+| exactly-once-trap | adversarial | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment challenged end-to-end exactly-once. |
+| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | 66.7% | 83.3% | +16.7 pp | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |
 
 ## Dimension Differences
 
@@ -298,12 +316,25 @@ Treatment improved correctness reasoning, verification value, and anti-pattern r
 
 Responses are preserved under each case section in this file.
 
+## Limitations
+
+- Self-evaluation bias: the same agent family generated and scored the pilot, so scores may favor the skill-enabled response style.
+- Response-shape/rubric alignment: treatment instructions ask for sections that map closely to the answer-quality rubric.
+- Single model: the pilot only covers GPT-5 Codex.
+- Single run: each case has one control response and one treatment response.
+- No variance estimate: the pilot does not report repeated-run mean, minimum, maximum, or range.
+- Non-random case selection: the five cases were selected for coverage, not sampled randomly.
+- Process-compliance rubric not scored: this pilot scores answer quality only.
+
 ## Overall Decision
 
 - Total control score: 38
 - Total treatment score: 51
 - Total lift: +13
-- Limitations: This is a five-case pilot scored from preserved paired responses. It is not statistical proof.
+- Mean normalized control: 68.0%
+- Mean normalized treatment: 91.3%
+- Mean normalized lift: +23.3 pp
+- Limitations: In one five-case paired pilot run, treatment scored higher than control and four must-pass cases crossed the pass threshold. This is directional pilot evidence, not statistical proof.
 """,
     )
 
@@ -490,6 +521,98 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(missing_paths, [])
         self.assertIn(
             "evaluation/ab/pilot-results.md: missing pilot case evaluation/cases/bad/01-cache-as-truth.md",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_score_total_drift(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "- Total treatment score: 51",
+                    "- Total treatment score: 50",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: total treatment score 50 does not equal case sum 51",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_missing_normalized_scores(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("Control normalized", "Control percent"),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing score column Control normalized",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_missing_required_limitation(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "- No variance estimate: the pilot does not report repeated-run mean, minimum, maximum, or range.\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing limitation No variance estimate",
+            ab_errors,
+        )
+
+    def test_checker_rejects_control_instructions_that_ban_structured_answers(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            write(
+                repo / "evaluation/ab/control-instructions.md",
+                """# Control Instructions
+
+Answer the benchmark case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill.
+
+Do not use the DDIA skill workflow, DDIA reference files, or DDIA skill response shape.
+""",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/control-instructions.md: must allow ordinary structured architecture reasoning",
             ab_errors,
         )
 

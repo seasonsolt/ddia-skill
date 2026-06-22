@@ -15,6 +15,10 @@ The control response answers the case without using or referencing the skill. Th
 5. Score both responses with `blind-scoring-guide.md` before revealing the mapping.
 6. Record control score, treatment score, lift, pass/fail change, and notes.
 
+The control arm is a no-skill baseline. It forbids loading or relying on `ddia-system-design`, but it does not forbid normal structured architecture reasoning.
+
+The treatment arm uses `ddia-system-design` and may follow its response shape. This creates a known response-shape/rubric alignment risk, so evaluators should score answer substance rather than heading presence.
+
 ## Pilot Case Set
 
 - `evaluation/cases/good/01-order-consistency.md`
@@ -25,4 +29,18 @@ The control response answers the case without using or referencing the skill. Th
 
 ## Limitations
 
-This is pilot A/B evidence, not statistical proof. A stronger study would use independent blinded scoring, repeated randomized runs, and more than one model.
+This is pilot A/B evidence, not statistical proof. The current pilot has self-evaluation bias, response-shape/rubric alignment risk, a single model, a single run per arm, no variance estimate, and non-random case selection. It also scores answer quality only; it does not score the process-compliance rubric.
+
+A stronger study would use independent blinded scoring, repeated randomized runs, and more than one model.
+
+## Repeated-Run Protocol
+
+Use repeated runs when moving beyond pilot evidence:
+
+1. Select cases before generating responses.
+2. Run at least three control responses and three treatment responses per case.
+3. Randomize whether control or treatment is labeled Response A for each pair.
+4. Score all responses before revealing mapping.
+5. Report mean, minimum, maximum, and range for each arm.
+6. Report pass-threshold crossings separately from average score lift.
+7. Preserve all response texts so another evaluator can rescore.

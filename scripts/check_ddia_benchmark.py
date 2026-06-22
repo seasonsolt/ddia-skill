@@ -87,10 +87,18 @@ AB_PILOT_CASES = [
     "evaluation/cases/bad/04-vague-startup-architecture.md",
 ]
 AB_REQUIRED_PHRASES = {
-    "evaluation/ab/README.md": ["control", "treatment", "pilot", "not statistical proof"],
+    "evaluation/ab/README.md": [
+        "control",
+        "treatment",
+        "pilot",
+        "not statistical proof",
+        "response-shape/rubric alignment",
+        "repeated runs",
+    ],
     "evaluation/ab/control-instructions.md": [
         "without using or referencing ddia-system-design",
         "Do not load, invoke, mention, or rely on the DDIA system design skill",
+        "Use whatever clear answer structure you normally would",
     ],
     "evaluation/ab/treatment-instructions.md": [
         "Use ddia-system-design",
@@ -99,21 +107,62 @@ AB_REQUIRED_PHRASES = {
     "evaluation/ab/blind-scoring-guide.md": [
         "Score Response A and Response B before revealing",
         "Reveal the mapping only after",
+        "Score the substance of the answer",
     ],
     "evaluation/ab/results-template.md": [
         "Control score",
         "Treatment score",
         "Lift",
+        "Control normalized",
+        "Treatment normalized",
+        "Normalized lift",
         "Pass/fail change",
         "Response Archive",
+        "Limitations",
     ],
     "evaluation/ab/pilot-results.md": [
         "Total control score:",
         "Total treatment score:",
         "Total lift:",
+        "Mean normalized control:",
+        "Mean normalized treatment:",
+        "Mean normalized lift:",
         "not statistical proof",
     ],
 }
+AB_SCORE_COLUMNS = [
+    "Control score",
+    "Treatment score",
+    "Lift",
+    "Control normalized",
+    "Treatment normalized",
+    "Normalized lift",
+    "Pass/fail change",
+    "Notes",
+]
+AB_LIMITATION_LABELS = [
+    "Self-evaluation bias",
+    "Response-shape/rubric alignment",
+    "Single model",
+    "Single run",
+    "No variance estimate",
+    "Non-random case selection",
+    "Process-compliance rubric not scored",
+]
+AB_CONTROL_BANNED_PHRASES = [
+    "do not use the ddia skill workflow",
+    "do not use the ddia skill response shape",
+    "do not use any similar structure",
+]
+AB_SCORE_ROW_PATTERN = re.compile(
+    r"^\| (?P<case>[^|]+) \| (?P<category>[^|]+) \| "
+    r"(?P<control>\d+)/(?P<control_den>\d+) \| "
+    r"(?P<treatment>\d+)/(?P<treatment_den>\d+) \| "
+    r"(?P<lift>[+-]\d+) \| "
+    r"(?P<control_norm>\d+(?:\.\d+)?)% \| "
+    r"(?P<treatment_norm>\d+(?:\.\d+)?)% \| "
+    r"(?P<normalized_lift>[+-]\d+(?:\.\d+)?) pp \| "
+)
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -144,6 +193,94 @@ def metadata_value(text: str, label: str) -> str | None:
         if line.startswith(prefix):
             return line[len(prefix) :].strip()
     return None
+
+
+def numeric_metadata_value(text: str, label: str) -> int | None:
+    value = metadata_value(text, label)
+    if value is None:
+        return None
+    match = re.search(r"[+-]?\d+", value)
+    return int(match.group(0)) if match else None
+
+
+def percentage_metadata_value(text: str, label: str) -> float | None:
+    value = metadata_value(text, label)
+    if value is None:
+        return None
+    match = re.search(r"[+-]?\d+(?:\.\d+)?", value)
+    return float(match.group(0)) if match else None
+
+
+def close_percent(actual: float, expected: float) -> bool:
+    return abs(actual - expected) <= 0.15
+
+
+def validate_ab_score_math(text: str, relative: str) -> list[str]:
+    errors: list[str] = []
+    control_total = 0
+    treatment_total = 0
+    normalized_control_values: list[float] = []
+    normalized_treatment_values: list[float] = []
+
+    for line in text.splitlines():
+        match = AB_SCORE_ROW_PATTERN.match(line)
+        if not match:
+            continue
+        case = match.group("case").strip()
+        control = int(match.group("control"))
+        control_den = int(match.group("control_den"))
+        treatment = int(match.group("treatment"))
+        treatment_den = int(match.group("treatment_den"))
+        lift = int(match.group("lift"))
+        control_norm = float(match.group("control_norm"))
+        treatment_norm = float(match.group("treatment_norm"))
+        normalized_lift = float(match.group("normalized_lift"))
+
+        control_total += control
+        treatment_total += treatment
+        expected_control_norm = control / control_den * 100
+        expected_treatment_norm = treatment / treatment_den * 100
+        expected_normalized_lift = expected_treatment_norm - expected_control_norm
+        normalized_control_values.append(expected_control_norm)
+        normalized_treatment_values.append(expected_treatment_norm)
+
+        if control_den == treatment_den and lift != treatment - control:
+            errors.append(f"{relative}: {case} lift {lift:+d} does not equal treatment minus control {treatment - control:+d}")
+        if not close_percent(control_norm, expected_control_norm):
+            errors.append(f"{relative}: {case} control normalized {control_norm:.1f}% does not match {expected_control_norm:.1f}%")
+        if not close_percent(treatment_norm, expected_treatment_norm):
+            errors.append(f"{relative}: {case} treatment normalized {treatment_norm:.1f}% does not match {expected_treatment_norm:.1f}%")
+        if not close_percent(normalized_lift, expected_normalized_lift):
+            errors.append(f"{relative}: {case} normalized lift {normalized_lift:+.1f} pp does not match {expected_normalized_lift:+.1f} pp")
+
+    if not normalized_control_values:
+        errors.append(f"{relative}: no parseable case score rows")
+        return errors
+
+    total_control = numeric_metadata_value(text, "- Total control score")
+    total_treatment = numeric_metadata_value(text, "- Total treatment score")
+    total_lift = numeric_metadata_value(text, "- Total lift")
+    if total_control != control_total:
+        errors.append(f"{relative}: total control score {total_control} does not equal case sum {control_total}")
+    if total_treatment != treatment_total:
+        errors.append(f"{relative}: total treatment score {total_treatment} does not equal case sum {treatment_total}")
+    if total_lift != treatment_total - control_total:
+        errors.append(f"{relative}: total lift {total_lift} does not equal treatment minus control {treatment_total - control_total:+d}")
+
+    mean_control = sum(normalized_control_values) / len(normalized_control_values)
+    mean_treatment = sum(normalized_treatment_values) / len(normalized_treatment_values)
+    mean_lift = mean_treatment - mean_control
+    recorded_mean_control = percentage_metadata_value(text, "- Mean normalized control")
+    recorded_mean_treatment = percentage_metadata_value(text, "- Mean normalized treatment")
+    recorded_mean_lift = percentage_metadata_value(text, "- Mean normalized lift")
+    if recorded_mean_control is None or not close_percent(recorded_mean_control, mean_control):
+        errors.append(f"{relative}: mean normalized control does not match {mean_control:.1f}%")
+    if recorded_mean_treatment is None or not close_percent(recorded_mean_treatment, mean_treatment):
+        errors.append(f"{relative}: mean normalized treatment does not match {mean_treatment:.1f}%")
+    if recorded_mean_lift is None or not close_percent(recorded_mean_lift, mean_lift):
+        errors.append(f"{relative}: mean normalized lift does not match {mean_lift:+.1f} pp")
+
+    return errors
 
 
 def has_markdown_section(text: str, heading: str) -> bool:
@@ -255,9 +392,13 @@ def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
         for case in AB_PILOT_CASES:
             if case not in pilot_text:
                 errors.append(f"evaluation/ab/pilot-results.md: missing pilot case {case}")
-        for score_label in ["Control score", "Treatment score", "Lift", "Pass/fail change", "Notes"]:
+        for score_label in AB_SCORE_COLUMNS:
             if score_label not in pilot_text:
                 errors.append(f"evaluation/ab/pilot-results.md: missing score column {score_label}")
+        for limitation in AB_LIMITATION_LABELS:
+            if limitation not in pilot_text:
+                errors.append(f"evaluation/ab/pilot-results.md: missing limitation {limitation}")
+        errors.extend(validate_ab_score_math(pilot_text, "evaluation/ab/pilot-results.md"))
 
     control_text = read_text(repo / "evaluation/ab/control-instructions.md")
     if control_text and (
@@ -265,6 +406,10 @@ def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
         or "Do not load, invoke, mention, or rely on the DDIA system design skill" not in control_text
     ):
         errors.append("evaluation/ab/control-instructions.md: must forbid using ddia-system-design")
+    if control_text and "Use whatever clear answer structure you normally would" not in control_text:
+        errors.append("evaluation/ab/control-instructions.md: must allow ordinary structured architecture reasoning")
+    if control_text and any(phrase in control_text.lower() for phrase in AB_CONTROL_BANNED_PHRASES):
+        errors.append("evaluation/ab/control-instructions.md: must allow ordinary structured architecture reasoning")
 
     treatment_text = read_text(repo / "evaluation/ab/treatment-instructions.md")
     if treatment_text and "Use ddia-system-design" not in treatment_text:
