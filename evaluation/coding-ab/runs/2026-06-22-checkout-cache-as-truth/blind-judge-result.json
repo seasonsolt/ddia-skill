@@ -1,0 +1,32 @@
+{
+  "case_id": "checkout-cache-as-truth",
+  "category": "bad",
+  "response_a": {
+    "correctness_invariant": 1,
+    "source_of_truth_boundary": 1,
+    "failure_mode_handling": 1,
+    "idempotency_retry_safety": 1,
+    "operational_verification": 2,
+    "java_patch_quality": 1,
+    "anti_pattern_resistance": null,
+    "total": 7,
+    "denominator": 12,
+    "pass": false,
+    "notes": "Adds an idempotency key and duplicate handling, and proposes tests for retry/crash/reconciliation, but still keeps Redis as the active availability source. Concurrent same-request retries can still mis-handle hold lifecycle, and stale hold-index cleanup is weak."
+  },
+  "response_b": {
+    "correctness_invariant": 1,
+    "source_of_truth_boundary": 1,
+    "failure_mode_handling": 1,
+    "idempotency_retry_safety": 2,
+    "operational_verification": 2,
+    "java_patch_quality": 1,
+    "anti_pattern_resistance": null,
+    "total": 8,
+    "denominator": 12,
+    "pass": false,
+    "notes": "Clearer idempotent/replay flow with explicit in-flight control and duplicate-path handling, and stronger failure tests. Still relies on Redis-decremented stock as the write-time availability gate without a durable inventory boundary; crash-after-reserve leak remains a correctness risk unless external reconciliation is fully defined/implemented."
+  },
+  "winner": "B",
+  "rationale": "Response B is stronger overall due to cleaner idempotency and concurrent replay handling (in-flight reservation + pre-check by checkoutId). Response A has a meaningful attempt but includes a higher-risk race around hold release under duplicate-inflight attempts and weaker hold-index hygiene. Neither fully satisfies the strongest DDIA fix (durable source-of-truth inventory transaction), so both fail. B is improved relative to A."
+}

@@ -60,6 +60,10 @@ Anti-pattern resistance is not scored for bad cases, so the denominator is 12.
 
 ## Blind Judge Output
 
+The full generated control answer, treatment answer, mapping, and raw judge JSON
+are archived in
+[`runs/2026-06-22-checkout-cache-as-truth`](runs/2026-06-22-checkout-cache-as-truth).
+
 ```json
 {
   "case_id": "checkout-cache-as-truth",
