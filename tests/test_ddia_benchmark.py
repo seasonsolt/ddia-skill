@@ -409,17 +409,20 @@ Score Response A and Response B before revealing which response is control or tr
 
 ## Dimensions
 
-1. Java patch correctness
-2. Source-of-truth reasoning
-3. Failure-mode coverage
-4. Transaction and idempotency reasoning
-5. Verification value
-6. Anti-pattern resistance
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
 
-Each dimension receives 0, 1, or 2 points.
+Base dimensions receive 0, 1, or 2 points.
+For bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
 
-Bad coding cases pass at 9 out of 12 with no zero in anti-pattern resistance.
-Adversarial coding cases pass at 10 out of 12 with 2 points in anti-pattern resistance.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0.
+Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
 
 ## Mapping Reveal
 
@@ -454,7 +457,7 @@ Reveal the mapping only after all dimensions, notes, and pass decisions are reco
 
 ## Dimension Differences
 
-Record Java patch correctness, source-of-truth reasoning, failure-mode coverage, transaction and idempotency reasoning, verification value, and anti-pattern resistance. Scores use the blind judge rubric where each dimension receives 0, 1, or 2 points.
+Record correctness invariant, source-of-truth boundary, failure-mode handling, idempotency and retry safety, operational verification, Java patch quality, and anti-pattern resistance. Scores use the blind judge rubric where base dimensions receive 0, 1, or 2 points.
 
 ## Response Archive
 
@@ -490,9 +493,12 @@ def valid_judge_payload(case_id: str = "checkout-cache-as-truth") -> dict:
         "idempotency_retry_safety": 2,
         "operational_verification": 1,
         "java_patch_quality": 2,
-        "anti_pattern_resistance": 2,
     }
-    total = sum(scores.values())
+    if case_id in {"payment-exactly-once-trap", "redis-distributed-lock-money-transfer"}:
+        scores["anti_pattern_resistance"] = 2
+    else:
+        scores["anti_pattern_resistance"] = None
+    total = sum(score for score in scores.values() if score is not None)
 
     def response_result() -> dict:
         return {
@@ -510,6 +516,22 @@ def valid_judge_payload(case_id: str = "checkout-cache-as-truth") -> dict:
 
 
 class DdiaBenchmarkTest(unittest.TestCase):
+    def test_coding_ab_judge_dimensions_match_payload_schema(self):
+        checker = load_checker()
+
+        self.assertEqual(
+            checker.CODING_AB_JUDGE_DIMENSIONS,
+            [
+                "Correctness invariant",
+                "Source-of-truth boundary",
+                "Failure-mode handling",
+                "Idempotency and retry safety",
+                "Operational verification",
+                "Java patch quality",
+                "Anti-pattern resistance",
+            ],
+        )
+
     def test_current_repo_benchmark_is_complete(self):
         checker = load_checker()
 
@@ -773,9 +795,12 @@ class ExampleService {
             make_complete_coding_ab_assets(repo)
             judge_path = repo / "evaluation/coding-ab/blind-llm-judge.md"
             judge_path.write_text(
-                judge_path.read_text(encoding="utf-8").replace(
-                    "Each dimension receives 0, 1, or 2 points.\n\n",
-                    "",
+                judge_path.read_text(encoding="utf-8")
+                .replace("Base dimensions receive 0, 1, or 2 points.\n", "")
+                .replace(
+                    "For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points "
+                    "and the total is out of 14.\n",
+                    "For adversarial coding cases, anti-pattern resistance contributes to the total out of 14.\n",
                 ),
                 encoding="utf-8",
             )
@@ -798,11 +823,11 @@ class ExampleService {
     def test_checker_rejects_coding_ab_judge_total_mismatch(self):
         checker = load_checker()
         payload = valid_judge_payload()
-        payload["response_a"]["total"] = 12
+        payload["response_a"]["total"] = 10
 
         errors = checker.validate_coding_ab_judge_result_payload(payload)
 
-        self.assertIn("response_a: total 12 does not match score sum 13", errors)
+        self.assertIn("response_a: total 10 does not match score sum 11", errors)
 
     def test_checker_rejects_coding_ab_judge_score_out_of_bounds(self):
         checker = load_checker()
@@ -811,7 +836,7 @@ class ExampleService {
 
         errors = checker.validate_coding_ab_judge_result_payload(payload)
 
-        self.assertIn("response_b: java_patch_quality must be 0, 1, 2, or null", errors)
+        self.assertIn("response_b: java_patch_quality must be 0, 1, or 2", errors)
 
     def test_checker_rejects_coding_ab_judge_mapping_leak(self):
         checker = load_checker()
@@ -823,6 +848,76 @@ class ExampleService {
 
         self.assertIn("response_a: must not reveal control or treatment mapping", errors)
         self.assertIn("response_b: must not reveal control or treatment mapping", errors)
+
+    def test_checker_accepts_valid_bad_coding_ab_judge_payload(self):
+        checker = load_checker()
+
+        errors = checker.validate_coding_ab_judge_result_payload(valid_judge_payload("checkout-cache-as-truth"))
+
+        self.assertEqual(errors, [])
+
+    def test_checker_accepts_valid_adversarial_coding_ab_judge_payload(self):
+        checker = load_checker()
+
+        errors = checker.validate_coding_ab_judge_result_payload(
+            valid_judge_payload("payment-exactly-once-trap")
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_checker_rejects_coding_ab_judge_false_pass(self):
+        checker = load_checker()
+        payload = valid_judge_payload()
+        for score_key in [
+            "correctness_invariant",
+            "source_of_truth_boundary",
+            "failure_mode_handling",
+            "idempotency_retry_safety",
+            "operational_verification",
+            "java_patch_quality",
+        ]:
+            payload["response_a"]["scores"][score_key] = 0
+        payload["response_a"]["total"] = 0
+        payload["response_a"]["pass"] = True
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn("response_a: pass True does not match computed pass False", errors)
+
+    def test_checker_rejects_bad_coding_ab_judge_numeric_anti_pattern_score(self):
+        checker = load_checker()
+        payload = valid_judge_payload("checkout-cache-as-truth")
+        payload["response_a"]["scores"]["anti_pattern_resistance"] = 2
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn(
+            "response_a: anti_pattern_resistance must be null for non-adversarial coding cases",
+            errors,
+        )
+
+    def test_checker_rejects_adversarial_coding_ab_judge_null_anti_pattern_score(self):
+        checker = load_checker()
+        payload = valid_judge_payload("payment-exactly-once-trap")
+        payload["response_a"]["scores"]["anti_pattern_resistance"] = None
+        payload["response_a"]["total"] = 12
+        payload["response_a"]["pass"] = False
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn(
+            "response_a: anti_pattern_resistance must be 0, 1, or 2 for adversarial coding cases",
+            errors,
+        )
+
+    def test_checker_rejects_coding_ab_judge_unknown_case_id(self):
+        checker = load_checker()
+        payload = valid_judge_payload()
+        payload["case_id"] = "unknown-case"
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn("case_id: unknown coding A/B case unknown-case", errors)
 
     def test_checker_reports_missing_ab_file(self):
         checker = load_checker()

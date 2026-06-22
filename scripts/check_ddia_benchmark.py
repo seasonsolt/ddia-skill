@@ -132,11 +132,12 @@ CODING_AB_REQUIRED_FILES = [
 CODING_AB_README_SECTIONS = ["Purpose", "Method", "Case Set", "Limitations"]
 CODING_AB_JUDGE_SECTIONS = ["Scoring Order", "Dimensions", "Mapping Reveal"]
 CODING_AB_JUDGE_DIMENSIONS = [
-    "Java patch correctness",
-    "Source-of-truth reasoning",
-    "Failure-mode coverage",
-    "Transaction and idempotency reasoning",
-    "Verification value",
+    "Correctness invariant",
+    "Source-of-truth boundary",
+    "Failure-mode handling",
+    "Idempotency and retry safety",
+    "Operational verification",
+    "Java patch quality",
     "Anti-pattern resistance",
 ]
 CODING_AB_RESULT_SECTIONS = [
@@ -198,6 +199,10 @@ CODING_AB_SCORE_KEYS = [
     "anti_pattern_resistance",
 ]
 CODING_AB_RESPONSE_KEYS = ["response_a", "response_b"]
+CODING_AB_ANTI_PATTERN_SCORE_KEY = "anti_pattern_resistance"
+CODING_AB_BASE_SCORE_KEYS = [
+    score_key for score_key in CODING_AB_SCORE_KEYS if score_key != CODING_AB_ANTI_PATTERN_SCORE_KEY
+]
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -424,6 +429,11 @@ def validate_coding_ab_judge_result_payload(payload: object) -> list[str]:
     case_id = payload.get("case_id")
     if not isinstance(case_id, str) or not case_id.strip():
         errors.append("case_id: must be a non-empty string")
+        case_category = None
+    else:
+        case_category = CODING_AB_CASES.get(case_id)
+        if case_category is None:
+            errors.append(f"case_id: unknown coding A/B case {case_id}")
 
     for response_key in CODING_AB_RESPONSE_KEYS:
         response = payload.get(response_key)
@@ -436,31 +446,77 @@ def validate_coding_ab_judge_result_payload(payload: object) -> list[str]:
 
         scores = response.get("scores")
         score_sum = 0
+        score_errors = False
+        base_scores: list[int] = []
+        anti_pattern_score: int | None = None
         if not isinstance(scores, dict):
             errors.append(f"{response_key}: scores must be an object")
+            score_errors = True
         else:
-            for score_key in CODING_AB_SCORE_KEYS:
+            for score_key in CODING_AB_BASE_SCORE_KEYS:
                 if score_key not in scores:
                     errors.append(f"{response_key}: missing score {score_key}")
+                    score_errors = True
                     continue
 
                 score = scores[score_key]
-                if score is None:
-                    continue
                 if isinstance(score, bool) or score not in {0, 1, 2}:
-                    errors.append(f"{response_key}: {score_key} must be 0, 1, 2, or null")
+                    errors.append(f"{response_key}: {score_key} must be 0, 1, or 2")
+                    score_errors = True
                     continue
                 score_sum += score
+                base_scores.append(score)
+
+            if CODING_AB_ANTI_PATTERN_SCORE_KEY not in scores:
+                errors.append(f"{response_key}: missing score {CODING_AB_ANTI_PATTERN_SCORE_KEY}")
+                score_errors = True
+            else:
+                anti_pattern_score = scores[CODING_AB_ANTI_PATTERN_SCORE_KEY]
+                if case_category == "adversarial":
+                    if isinstance(anti_pattern_score, bool) or anti_pattern_score not in {0, 1, 2}:
+                        errors.append(
+                            f"{response_key}: anti_pattern_resistance must be 0, 1, or 2 "
+                            "for adversarial coding cases"
+                        )
+                        score_errors = True
+                    else:
+                        score_sum += anti_pattern_score
+                elif case_category is not None:
+                    if anti_pattern_score is not None:
+                        errors.append(
+                            f"{response_key}: anti_pattern_resistance must be null "
+                            "for non-adversarial coding cases"
+                        )
+                        score_errors = True
 
         total = response.get("total")
         if isinstance(total, bool) or not isinstance(total, int):
             errors.append(f"{response_key}: total must be an integer")
-        elif isinstance(scores, dict) and total != score_sum:
-            errors.append(f"{response_key}: total {total} does not match score sum {score_sum}")
+            total_valid = False
+        else:
+            total_valid = True
+            max_total = 14 if case_category == "adversarial" else 12
+            if case_category is not None and total > max_total:
+                errors.append(f"{response_key}: total must not exceed {max_total}")
+            if isinstance(scores, dict) and not score_errors and total != score_sum:
+                errors.append(f"{response_key}: total {total} does not match score sum {score_sum}")
 
         passed = response.get("pass")
         if not isinstance(passed, bool):
             errors.append(f"{response_key}: pass must be a boolean")
+        elif case_category is not None and total_valid and isinstance(scores, dict) and not score_errors:
+            if case_category == "adversarial":
+                computed_pass = (
+                    total >= 12
+                    and all(score > 0 for score in base_scores)
+                    and anti_pattern_score is not None
+                    and anti_pattern_score > 0
+                    and anti_pattern_score == 2
+                )
+            else:
+                computed_pass = total >= 10 and all(score > 0 for score in base_scores)
+            if passed != computed_pass:
+                errors.append(f"{response_key}: pass {passed} does not match computed pass {computed_pass}")
 
         rationale = response.get("rationale")
         if not isinstance(rationale, str) or len(rationale.strip()) < 20:
