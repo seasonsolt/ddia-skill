@@ -118,6 +118,12 @@ scored by a blind LLM judge rubric and do not need to compile. This track is
 intended to produce stronger evidence than prose-only scoring because it checks
 whether the skill changes the code boundary, not only the explanation.
 
+The first real coding A/B pilot is recorded in
+[`evaluation/coding-ab/pilot-results.md`](evaluation/coding-ab/pilot-results.md).
+It is a useful negative result: the treatment beat the control by one point, but
+both responses failed because neither fully moved the inventory invariant out of
+Redis and into a durable transactional boundary.
+
 ## Benchmark Suite
 
 The repository also includes a repeatable benchmark for future skill changes.
