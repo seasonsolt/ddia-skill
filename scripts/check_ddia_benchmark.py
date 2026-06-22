@@ -6,6 +6,7 @@ import re
 
 
 EXPECTED_CASE_COUNTS = {"good": 5, "bad": 4, "adversarial": 4}
+AB_EXPECTED_SCORE_DENOMINATORS = {"good": 10, "bad": 12, "adversarial": 12}
 CASE_DIRS = {
     "good": pathlib.Path("evaluation/cases/good"),
     "bad": pathlib.Path("evaluation/cases/bad"),
@@ -252,13 +253,15 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
     normalized_control_values: list[float] = []
     normalized_treatment_values: list[float] = []
     score_row_cases: set[str] = set()
+    score_text = section_body(text, "Case Scores") or ""
 
-    for line in text.splitlines():
+    for line in score_text.splitlines():
         cells = markdown_table_cells(line)
         if cells is None or len(cells) < 8:
             continue
 
         case = cells[0]
+        category = cells[1]
         control_score = parse_score_fraction(cells[2])
         treatment_score = parse_score_fraction(cells[3])
         lift = parse_lift(cells[4])
@@ -281,6 +284,15 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
 
         control_total += control
         treatment_total += treatment
+        if control_den != treatment_den:
+            errors.append(f"{relative}: {case} control and treatment denominators must match")
+
+        expected_denominator = AB_EXPECTED_SCORE_DENOMINATORS.get(category)
+        if expected_denominator is not None and (
+            control_den != expected_denominator or treatment_den != expected_denominator
+        ):
+            errors.append(f"{relative}: {case} expected denominator {expected_denominator} for category {category}")
+
         if control_den <= 0 or treatment_den <= 0:
             errors.append(f"{relative}: {case} score denominator must be greater than 0")
             continue
