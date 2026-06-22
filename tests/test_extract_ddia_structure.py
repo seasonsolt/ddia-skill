@@ -8,12 +8,7 @@ from unittest import mock
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-PDF_PATH = pathlib.Path(
-    os.environ.get(
-        "DDIA_PDF_PATH",
-        "/Users/Thin/Library/Mobile Documents/com~apple~CloudDocs/学习/分布式/designing-data-intensive-applications.pdf",
-    )
-)
+PDF_PATH = pathlib.Path(os.environ["DDIA_PDF_PATH"]) if os.environ.get("DDIA_PDF_PATH") else None
 
 
 def load_module(module_path: pathlib.Path | None = None):
@@ -125,8 +120,8 @@ class ExtractDdiaStructureTest(unittest.TestCase):
                 load_module(pathlib.Path("missing.py"))
 
     def test_extracts_expected_ddia_outline_from_local_pdf(self):
-        if not PDF_PATH.exists():
-            self.skipTest(f"Missing PDF: {PDF_PATH}")
+        if PDF_PATH is None or not PDF_PATH.exists():
+            self.skipTest("Set DDIA_PDF_PATH to run the local PDF extraction test")
 
         module = load_module()
 

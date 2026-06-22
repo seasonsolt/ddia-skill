@@ -58,24 +58,153 @@ No deliberate trap; this case checks normal DDIA-style system design reasoning.
 """
 
 
+EXPANDED_CASES = {
+    "evaluation/cases/good/06-quantitative-workload-capacity.md": case_text(
+        title="Quantitative Workload Capacity",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/07-batch-backfill-reconciliation.md": case_text(
+        title="Batch Backfill Reconciliation",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/08-schema-evolution-rollout.md": case_text(
+        title="Schema Evolution Rollout",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/09-correct-cache-use.md": case_text(
+        title="Correct Cache Use",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/10-observability-runbook.md": case_text(
+        title="Observability Runbook",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/11-idempotency-outbox.md": case_text(
+        title="Idempotency Outbox",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/bad/05-capacity-cost-handwave.md": case_text(
+        title="Capacity Cost Handwave",
+        category="bad",
+        scoring_profile="anti-pattern",
+    ),
+    "evaluation/cases/adversarial/05-global-linearizable-writes.md": case_text(
+        title="Global Linearizable Writes",
+        category="adversarial",
+        scoring_profile="anti-pattern",
+    ),
+}
+
+
+COVERAGE_MATRIX = """The benchmark intentionally covers these DDIA-style backend design behaviors:
+
+- Source-of-truth and derived-data boundaries: `good/01-order-consistency.md`, `bad/01-cache-as-truth.md`, `good/05-derived-data.md`
+- Event pipeline correctness: `good/02-event-pipeline.md`, `good/11-idempotency-outbox.md`, `adversarial/02-exactly-once-trap.md`
+- Storage and database choice: `good/03-database-choice.md`
+- Schema evolution and compatibility: `good/08-schema-evolution-rollout.md`, `adversarial/04-schema-evolution-trap.md`
+- Replication and consistency: `good/04-replica-lag.md`, `bad/02-replica-lag-denial.md`, `adversarial/05-global-linearizable-writes.md`
+- Partitioning and hot spots: `bad/03-hot-partition.md`
+- Transactions, coordination, and consensus: `adversarial/03-distributed-lock-trap.md`
+- Quantitative workload and cost reasoning: `good/06-quantitative-workload-capacity.md`, `bad/05-capacity-cost-handwave.md`
+- Batch/backfill and reconciliation: `good/07-batch-backfill-reconciliation.md`
+- Correct cache use: `good/09-correct-cache-use.md`
+- Observability and operations: `good/10-observability-runbook.md`
+- Ambiguous requirements and requirement discovery: `bad/04-vague-startup-architecture.md`, `adversarial/01-tool-first-trap.md`"""
+
+
+BASE_CASES = [
+    (
+        "evaluation/cases/good/01-order-consistency.md",
+        "Order Consistency",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/02-event-pipeline.md",
+        "Event Pipeline",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/03-database-choice.md",
+        "Database Choice",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/04-replica-lag.md",
+        "Replica Lag",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/05-derived-data.md",
+        "Derived Data",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/bad/01-cache-as-truth.md",
+        "Cache As Truth",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/bad/02-replica-lag-denial.md",
+        "Replica Lag Denial",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/bad/03-hot-partition.md",
+        "Hot Partition",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/bad/04-vague-startup-architecture.md",
+        "Vague Startup Architecture",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/01-tool-first-trap.md",
+        "Tool First Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/02-exactly-once-trap.md",
+        "Exactly Once Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/03-distributed-lock-trap.md",
+        "Distributed Lock Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/04-schema-evolution-trap.md",
+        "Schema Evolution Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+]
+
+
 def make_complete_benchmark(root: pathlib.Path) -> None:
-    for index in range(1, 6):
+    for relative, title, category, scoring_profile in BASE_CASES:
         write(
-            root / f"evaluation/cases/good/{index:02d}-good-case.md",
-            case_text(title=f"Good Case {index}", category="good", scoring_profile="good"),
-        )
-    for index in range(1, 5):
-        write(
-            root / f"evaluation/cases/bad/{index:02d}-bad-case.md",
-            case_text(title=f"Bad Case {index}", category="bad", scoring_profile="anti-pattern"),
-        )
-        write(
-            root / f"evaluation/cases/adversarial/{index:02d}-adversarial-case.md",
-            case_text(
-                title=f"Adversarial Case {index}",
-                category="adversarial",
-                scoring_profile="anti-pattern",
-            ),
+            root / relative,
+            case_text(title=title, category=category, scoring_profile=scoring_profile),
         )
 
     write(
@@ -131,11 +260,15 @@ def make_complete_benchmark(root: pathlib.Path) -> None:
     )
     write(
         root / "evaluation/benchmark-guide.md",
-        """# DDIA Skill Benchmark Guide
+        f"""# DDIA Skill Benchmark Guide
 
 ## Purpose
 
 Use this benchmark to provide evidence of usefulness and drive iteration.
+
+## Coverage Matrix
+
+{COVERAGE_MATRIX}
 
 ## How To Run
 
@@ -150,7 +283,8 @@ Use answer quality and process compliance separately.
 Compare the new results against the previous benchmark result.
 """,
     )
-
+    for relative, text in EXPANDED_CASES.items():
+        write(root / relative, text)
 
 AB_REQUIRED_FILES = [
     "evaluation/ab/README.md",
@@ -185,7 +319,9 @@ Run the same cases with the same model, score Response A and Response B, then re
 
 ## Limitations
 
-This is pilot A/B evidence, not statistical proof.
+This is pilot A/B evidence, not statistical proof. The current pilot has self-evaluation bias, response-shape/rubric alignment risk, a single model, a single run per arm, no variance estimate, non-random case selection, and no repeated runs. It also scores answer quality only; it does not score the process-compliance rubric.
+
+A stronger study would use independent blinded scoring, repeated randomized runs, and more than one model.
 """,
     )
     write(
@@ -195,6 +331,8 @@ This is pilot A/B evidence, not statistical proof.
 Answer the benchmark case without using or referencing ddia-system-design.
 
 Do not load, invoke, mention, or rely on the DDIA system design skill.
+
+Use your general backend architecture knowledge. Use whatever clear answer structure you normally would for a backend architecture review.
 """,
     )
     write(
@@ -213,6 +351,8 @@ Follow the ddia-system-design response shape: assumptions, recommendation, trade
 ## Scoring Order
 
 Score Response A and Response B before revealing which response is control or treatment.
+
+Score the substance of the answer, not the mere presence of headings. A response should earn points when it actually explains workload, trade-offs, failure modes, correctness, and verification.
 
 ## Mapping Reveal
 
@@ -237,8 +377,8 @@ Reveal the mapping only after all dimensions, notes, and pass decisions are reco
 
 ## Case Scores
 
-| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
+| Case | Category | Control score | Treatment score | Lift | Control normalized | Treatment normalized | Normalized lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 ## Dimension Differences
 
@@ -248,12 +388,24 @@ Record workload framing, trade-off quality, failure-mode coverage, correctness r
 
 Preserve Response A and Response B for every case.
 
+## Limitations
+
+- Self-evaluation bias:
+- Response-shape/rubric alignment:
+- Single model:
+- Single run:
+- No variance estimate:
+- Non-random case selection:
+- Process-compliance rubric not scored:
+
 ## Overall Decision
 
 - Total control score:
 - Total treatment score:
 - Total lift:
-- Limitations:
+- Mean normalized control:
+- Mean normalized treatment:
+- Mean normalized lift:
 """,
     )
     write(
@@ -282,13 +434,13 @@ Preserve Response A and Response B for every case.
 
 ## Case Scores
 
-| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| order-consistency | good | 7 | 9 | +2 | fail to pass | Treatment added stronger verification and failure-mode reasoning. |
-| replica-lag | good | 7 | 10 | +3 | fail to pass | Treatment named read-your-writes and monotonic reads. |
-| cache-as-truth | bad | 8 | 11 | +3 | fail to pass | Treatment rejected Redis as source of truth. |
-| exactly-once-trap | adversarial | 8 | 11 | +3 | fail to pass | Treatment challenged end-to-end exactly-once. |
-| vague-startup-architecture | bad | 8 | 10 | +2 | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |
+| Case | Category | Control score | Treatment score | Lift | Control normalized | Treatment normalized | Normalized lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |
+| replica-lag | good | 7/10 | 10/10 | +3 | 70.0% | 100.0% | +30.0 pp | fail to pass | Treatment named read-your-writes and monotonic reads. |
+| cache-as-truth | bad | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment rejected Redis as source of truth. |
+| exactly-once-trap | adversarial | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment challenged end-to-end exactly-once. |
+| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | 66.7% | 83.3% | +16.7 pp | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |
 
 ## Dimension Differences
 
@@ -298,12 +450,25 @@ Treatment improved correctness reasoning, verification value, and anti-pattern r
 
 Responses are preserved under each case section in this file.
 
+## Limitations
+
+- Self-evaluation bias: the same agent family generated and scored the pilot, so scores may favor the skill-enabled response style.
+- Response-shape/rubric alignment: treatment instructions ask for sections that map closely to the answer-quality rubric.
+- Single model: the pilot only covers GPT-5 Codex.
+- Single run: each case has one control response and one treatment response.
+- No variance estimate: the pilot does not report repeated-run mean, minimum, maximum, or range.
+- Non-random case selection: the five cases were selected for coverage, not sampled randomly.
+- Process-compliance rubric not scored: this pilot scores answer quality only.
+
 ## Overall Decision
 
 - Total control score: 38
 - Total treatment score: 51
 - Total lift: +13
-- Limitations: This is a five-case pilot scored from preserved paired responses. It is not statistical proof.
+- Mean normalized control: 68.0%
+- Mean normalized treatment: 91.3%
+- Mean normalized lift: +23.3 pp
+- Limitations: In one five-case paired pilot run, treatment scored higher than control and four must-pass cases crossed the pass threshold. This is directional pilot evidence, not statistical proof.
 """,
     )
 
@@ -548,7 +713,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
         report = checker.check_benchmark(REPO)
 
-        self.assertEqual(report["case_counts"], {"good": 5, "bad": 4, "adversarial": 4})
+        self.assertEqual(report["case_counts"], {"good": 11, "bad": 5, "adversarial": 5})
         self.assertEqual(report["missing_paths"], [])
         self.assertEqual(report["case_errors"], [])
         self.assertEqual(report["rubric_errors"], [])
@@ -576,7 +741,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
             report = checker.check_benchmark(repo)
 
-        self.assertEqual(report["case_counts"], {"good": 5, "bad": 4, "adversarial": 4})
+        self.assertEqual(report["case_counts"], {"good": 11, "bad": 5, "adversarial": 5})
         self.assertEqual(report["missing_paths"], [])
         self.assertEqual(report["case_errors"], [])
         self.assertEqual(report["rubric_errors"], [])
@@ -585,6 +750,129 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(report["ab_errors"], [])
         self.assertEqual(report["coding_ab_missing_paths"], [])
         self.assertEqual(report["coding_ab_errors"], [])
+
+    def test_checker_rejects_missing_coverage_matrix(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    f"## Coverage Matrix\n\n{COVERAGE_MATRIX}\n\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: missing section Coverage Matrix",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_missing_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    "`good/11-idempotency-outbox.md`",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix missing case good/11-idempotency-outbox.md",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_unknown_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    "`good/03-database-choice.md`",
+                    "`good/03-database-choice.md`, `good/99-unknown.md`",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix unknown case good/99-unknown.md",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_duplicate_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    "`good/03-database-choice.md`",
+                    "`good/03-database-choice.md`, `good/03-database-choice.md`",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix duplicates case good/03-database-choice.md",
+            report["guide_errors"],
+        )
+
+    def test_checker_rejects_coverage_matrix_wrong_topic(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_text = guide_path.read_text(encoding="utf-8")
+            guide_text = guide_text.replace(
+                "- Partitioning and hot spots: `bad/03-hot-partition.md`",
+                "- Partitioning and hot spots: `bad/03-hot-partition.md`, `adversarial/03-distributed-lock-trap.md`",
+            )
+            guide_text = guide_text.replace(
+                "- Transactions, coordination, and consensus: `adversarial/03-distributed-lock-trap.md`",
+                "- Transactions, coordination, and consensus:",
+            )
+            guide_path.write_text(guide_text, encoding="utf-8")
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: coverage matrix must list adversarial/03-distributed-lock-trap.md under Transactions, coordination, and consensus",
+            report["guide_errors"],
+        )
+
+    def test_checker_reports_missing_required_expanded_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            missing_case = repo / "evaluation/cases/good/06-quantitative-workload-capacity.md"
+            missing_case.unlink()
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/cases/good/06-quantitative-workload-capacity.md: missing required case",
+            report["case_errors"],
+        )
 
     def test_benchmark_checker_reports_missing_ab_file(self):
         checker = load_checker()
@@ -604,9 +892,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
-            make_complete_ab_assets(repo)
-            make_complete_coding_ab_assets(repo)
-            case_path = repo / "evaluation/cases/bad/01-bad-case.md"
+            case_path = repo / "evaluation/cases/bad/01-cache-as-truth.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace("## Strong Answer Signals", "## Strong Signals"),
                 encoding="utf-8",
@@ -615,7 +901,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             report = checker.check_benchmark(repo)
 
         self.assertIn(
-            "evaluation/cases/bad/01-bad-case.md: missing section Strong Answer Signals",
+            "evaluation/cases/bad/01-cache-as-truth.md: missing section Strong Answer Signals",
             report["case_errors"],
         )
 
@@ -624,9 +910,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
-            make_complete_ab_assets(repo)
-            make_complete_coding_ab_assets(repo)
-            case_path = repo / "evaluation/cases/adversarial/01-adversarial-case.md"
+            case_path = repo / "evaluation/cases/adversarial/01-tool-first-trap.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace("Category: adversarial", "Category: good"),
                 encoding="utf-8",
@@ -635,7 +919,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             report = checker.check_benchmark(repo)
 
         self.assertIn(
-            "evaluation/cases/adversarial/01-adversarial-case.md: expected Category: adversarial",
+            "evaluation/cases/adversarial/01-tool-first-trap.md: expected Category: adversarial",
             report["case_errors"],
         )
 
@@ -644,9 +928,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
-            make_complete_ab_assets(repo)
-            make_complete_coding_ab_assets(repo)
-            case_path = repo / "evaluation/cases/bad/02-bad-case.md"
+            case_path = repo / "evaluation/cases/bad/02-replica-lag-denial.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace(
                     "Scoring profile: anti-pattern",
@@ -658,7 +940,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             report = checker.check_benchmark(repo)
 
         self.assertIn(
-            "evaluation/cases/bad/02-bad-case.md: expected Scoring profile: anti-pattern",
+            "evaluation/cases/bad/02-replica-lag-denial.md: expected Scoring profile: anti-pattern",
             report["case_errors"],
         )
 
@@ -1015,6 +1297,423 @@ class ExampleService {
         self.assertEqual(missing_paths, [])
         self.assertIn(
             "evaluation/ab/pilot-results.md: missing pilot case evaluation/cases/bad/01-cache-as-truth.md",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_score_total_drift(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "- Total treatment score: 51",
+                    "- Total treatment score: 50",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: total treatment score 50 does not equal case sum 51",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_missing_score_row_for_required_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| cache-as-truth | bad | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment rejected Redis as source of truth. |\n",
+                "",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 30")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 40")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +10")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 68.4%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 91.3%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +22.9 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing score row for cache-as-truth",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_unexpected_score_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | 66.7% | 83.3% | +16.7 pp | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |\n",
+                "| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | 66.7% | 83.3% | +16.7 pp | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |\n"
+                "| invented-case | good | 1/10 | 2/10 | +1 | 10.0% | 20.0% | +10.0 pp | no change | Extra row. |\n",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 39")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 53")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +14")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 58.4%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 79.5%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +21.1 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: unexpected score row for invented-case",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_unparseable_score_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("7/10", "7", 1),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: unparseable score row for order-consistency",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_truncated_score_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+                    "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp |",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: malformed score row for order-consistency",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_duplicate_score_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |\n"
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |\n",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 45")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 60")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +15")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 68.3%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 91.1%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +22.8 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: duplicate score row for order-consistency",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_score_zero_denominator(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("7/10", "7/0", 1),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency score denominator must be greater than 0",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_score_above_denominator(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+                "| order-consistency | good | 11/10 | 12/10 | +1 | 110.0% | 120.0% | +10.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 42")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 54")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +12")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 76.0%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 97.3%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +21.3 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency control score must be between 0 and 10",
+            ab_errors,
+        )
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency treatment score must be between 0 and 10",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_score_denominator_mismatch(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+                "| order-consistency | good | 7/10 | 9/12 | +2 | 70.0% | 75.0% | +5.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+            )
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 88.3%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +20.3 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency control and treatment denominators must match",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_wrong_category_denominator(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| cache-as-truth | bad | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment rejected Redis as source of truth. |",
+                "| cache-as-truth | bad | 8/10 | 11/10 | +3 | 80.0% | 110.0% | +30.0 pp | fail to pass | Treatment rejected Redis as source of truth. |",
+            )
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 70.7%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 95.0%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +24.3 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: cache-as-truth expected denominator 12 for category bad",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_unknown_score_category(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "| order-consistency | good | 7/10 | 9/10 |",
+                    "| order-consistency | typo | 7/10 | 9/10 |",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertTrue(
+            any(
+                error
+                in {
+                    "evaluation/ab/pilot-results.md: order-consistency unknown category typo",
+                    "evaluation/ab/pilot-results.md: order-consistency expected category good, found typo",
+                }
+                for error in ab_errors
+            ),
+            ab_errors,
+        )
+
+    def test_checker_ignores_score_like_tables_outside_case_scores(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "Responses are preserved under each case section in this file.",
+                """Responses are preserved under each case section in this file.
+
+| Case | Category | Control score | Treatment score | Lift | Control normalized | Treatment normalized | Normalized lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| archive-only | bad | 1/1 | 1/1 | +0 | 100.0% | 100.0% | +0.0 pp | unchanged | This archived table is not part of scoring. |""",
+            )
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertEqual(ab_errors, [])
+
+    def test_checker_rejects_pilot_normalized_score_drift(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("70.0%", "71.0%", 1),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency control normalized 71.0% does not match 70.0%",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_missing_normalized_scores(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("Control normalized", "Control percent"),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing score column Control normalized",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_missing_required_limitation(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "- No variance estimate: the pilot does not report repeated-run mean, minimum, maximum, or range.\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing limitation No variance estimate",
+            ab_errors,
+        )
+
+    def test_benchmark_checker_reports_ab_content_error(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "- Single model: the pilot only covers GPT-5 Codex.\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing limitation Single model",
+            report["ab_errors"],
+        )
+
+    def test_checker_rejects_control_instructions_that_ban_structured_answers(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            write(
+                repo / "evaluation/ab/control-instructions.md",
+                """# Control Instructions
+
+Answer the benchmark case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill.
+
+Do not use the DDIA skill workflow, DDIA reference files, or DDIA skill response shape.
+""",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/control-instructions.md: must allow ordinary structured architecture reasoning",
             ab_errors,
         )
 

@@ -5,7 +5,37 @@ import pathlib
 import re
 
 
-EXPECTED_CASE_COUNTS = {"good": 5, "bad": 4, "adversarial": 4}
+REQUIRED_CASE_FILES = {
+    "good": [
+        pathlib.Path("evaluation/cases/good/01-order-consistency.md"),
+        pathlib.Path("evaluation/cases/good/02-event-pipeline.md"),
+        pathlib.Path("evaluation/cases/good/03-database-choice.md"),
+        pathlib.Path("evaluation/cases/good/04-replica-lag.md"),
+        pathlib.Path("evaluation/cases/good/05-derived-data.md"),
+        pathlib.Path("evaluation/cases/good/06-quantitative-workload-capacity.md"),
+        pathlib.Path("evaluation/cases/good/07-batch-backfill-reconciliation.md"),
+        pathlib.Path("evaluation/cases/good/08-schema-evolution-rollout.md"),
+        pathlib.Path("evaluation/cases/good/09-correct-cache-use.md"),
+        pathlib.Path("evaluation/cases/good/10-observability-runbook.md"),
+        pathlib.Path("evaluation/cases/good/11-idempotency-outbox.md"),
+    ],
+    "bad": [
+        pathlib.Path("evaluation/cases/bad/01-cache-as-truth.md"),
+        pathlib.Path("evaluation/cases/bad/02-replica-lag-denial.md"),
+        pathlib.Path("evaluation/cases/bad/03-hot-partition.md"),
+        pathlib.Path("evaluation/cases/bad/04-vague-startup-architecture.md"),
+        pathlib.Path("evaluation/cases/bad/05-capacity-cost-handwave.md"),
+    ],
+    "adversarial": [
+        pathlib.Path("evaluation/cases/adversarial/01-tool-first-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/02-exactly-once-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/03-distributed-lock-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/04-schema-evolution-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/05-global-linearizable-writes.md"),
+    ],
+}
+EXPECTED_CASE_COUNTS = {category: len(paths) for category, paths in REQUIRED_CASE_FILES.items()}
+AB_EXPECTED_SCORE_DENOMINATORS = {"good": 10, "bad": 12, "adversarial": 12}
 CASE_DIRS = {
     "good": pathlib.Path("evaluation/cases/good"),
     "bad": pathlib.Path("evaluation/cases/bad"),
@@ -49,10 +79,18 @@ RESULT_TEMPLATE_SECTIONS = [
 ]
 GUIDE_SECTIONS = [
     "Purpose",
+    "Coverage Matrix",
     "How To Run",
     "How To Score",
     "Regression Review",
 ]
+COVERAGE_MATRIX_TOPIC_REQUIREMENTS = {
+    "good/03-database-choice.md": "Storage and database choice",
+    "good/08-schema-evolution-rollout.md": "Schema evolution and compatibility",
+    "adversarial/04-schema-evolution-trap.md": "Schema evolution and compatibility",
+    "bad/03-hot-partition.md": "Partitioning and hot spots",
+    "adversarial/03-distributed-lock-trap.md": "Transactions, coordination, and consensus",
+}
 
 RUBRIC_FILES = {
     "evaluation/rubrics/answer-quality.md": ANSWER_QUALITY_DIMENSIONS,
@@ -77,6 +115,7 @@ AB_RESULT_SECTIONS = [
     "Case Scores",
     "Dimension Differences",
     "Response Archive",
+    "Limitations",
     "Overall Decision",
 ]
 AB_PILOT_CASES = [
@@ -86,11 +125,34 @@ AB_PILOT_CASES = [
     "evaluation/cases/adversarial/02-exactly-once-trap.md",
     "evaluation/cases/bad/04-vague-startup-architecture.md",
 ]
+AB_PILOT_CASE_SCORE_SLUGS = {
+    "evaluation/cases/good/01-order-consistency.md": "order-consistency",
+    "evaluation/cases/good/04-replica-lag.md": "replica-lag",
+    "evaluation/cases/bad/01-cache-as-truth.md": "cache-as-truth",
+    "evaluation/cases/adversarial/02-exactly-once-trap.md": "exactly-once-trap",
+    "evaluation/cases/bad/04-vague-startup-architecture.md": "vague-startup-architecture",
+}
+AB_ALLOWED_SCORE_CATEGORIES = {"good", "bad", "adversarial"}
+AB_PILOT_CASE_SCORE_CATEGORIES = {
+    "order-consistency": "good",
+    "replica-lag": "good",
+    "cache-as-truth": "bad",
+    "exactly-once-trap": "adversarial",
+    "vague-startup-architecture": "bad",
+}
 AB_REQUIRED_PHRASES = {
-    "evaluation/ab/README.md": ["control", "treatment", "pilot", "not statistical proof"],
+    "evaluation/ab/README.md": [
+        "control",
+        "treatment",
+        "pilot",
+        "not statistical proof",
+        "response-shape/rubric alignment",
+        "repeated runs",
+    ],
     "evaluation/ab/control-instructions.md": [
         "without using or referencing ddia-system-design",
         "Do not load, invoke, mention, or rely on the DDIA system design skill",
+        "Use whatever clear answer structure you normally would",
     ],
     "evaluation/ab/treatment-instructions.md": [
         "Use ddia-system-design",
@@ -99,21 +161,54 @@ AB_REQUIRED_PHRASES = {
     "evaluation/ab/blind-scoring-guide.md": [
         "Score Response A and Response B before revealing",
         "Reveal the mapping only after",
+        "Score the substance of the answer",
     ],
     "evaluation/ab/results-template.md": [
         "Control score",
         "Treatment score",
         "Lift",
+        "Control normalized",
+        "Treatment normalized",
+        "Normalized lift",
         "Pass/fail change",
         "Response Archive",
+        "Limitations",
     ],
     "evaluation/ab/pilot-results.md": [
         "Total control score:",
         "Total treatment score:",
         "Total lift:",
+        "Mean normalized control:",
+        "Mean normalized treatment:",
+        "Mean normalized lift:",
         "not statistical proof",
     ],
 }
+AB_SCORE_COLUMNS = [
+    "Control score",
+    "Treatment score",
+    "Lift",
+    "Control normalized",
+    "Treatment normalized",
+    "Normalized lift",
+    "Pass/fail change",
+    "Notes",
+]
+AB_SCORE_ROW_COLUMN_COUNT = 2 + len(AB_SCORE_COLUMNS)
+AB_LIMITATION_LABELS = [
+    "Self-evaluation bias",
+    "Response-shape/rubric alignment",
+    "Single model",
+    "Single run",
+    "No variance estimate",
+    "Non-random case selection",
+    "Process-compliance rubric not scored",
+]
+AB_CONTROL_BANNED_PHRASES = [
+    "do not use the ddia skill workflow",
+    "do not use the ddia skill response shape",
+    "do not use any similar structure",
+]
 
 CODING_AB_CASES = {
     "checkout-cache-as-truth": "bad",
@@ -209,6 +304,11 @@ def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
+def required_case_refs() -> set[str]:
+    prefix = pathlib.Path("evaluation/cases")
+    return {case.relative_to(prefix).as_posix() for paths in REQUIRED_CASE_FILES.values() for case in paths}
+
+
 def section_body(text: str, heading: str) -> str | None:
     marker = f"## {heading}"
     lines = text.splitlines()
@@ -252,6 +352,181 @@ def markdown_table_first_column_values(body: str) -> set[str]:
             continue
         values.add(cells[0])
     return values
+
+
+def numeric_metadata_value(text: str, label: str) -> int | None:
+    value = metadata_value(text, label)
+    if value is None:
+        return None
+    match = re.search(r"[+-]?\d+", value)
+    return int(match.group(0)) if match else None
+
+
+def percentage_metadata_value(text: str, label: str) -> float | None:
+    value = metadata_value(text, label)
+    if value is None:
+        return None
+    match = re.search(r"[+-]?\d+(?:\.\d+)?", value)
+    return float(match.group(0)) if match else None
+
+
+def close_percent(actual: float, expected: float) -> bool:
+    return abs(actual - expected) <= 0.15
+
+
+def parse_score_fraction(value: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r"(\d+)/(\d+)", value.strip())
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def parse_percent(value: str) -> float | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)%", value.strip())
+    return float(match.group(1)) if match else None
+
+
+def parse_normalized_lift(value: str) -> float | None:
+    match = re.fullmatch(r"([+-]\d+(?:\.\d+)?) pp", value.strip())
+    return float(match.group(1)) if match else None
+
+
+def parse_lift(value: str) -> int | None:
+    match = re.fullmatch(r"([+-]\d+)", value.strip())
+    return int(match.group(1)) if match else None
+
+
+def markdown_table_cells(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if not cells or cells[0] == "Case" or all(set(cell) <= {"-", ":"} for cell in cells):
+        return None
+    return cells
+
+
+def validate_ab_score_math(text: str, relative: str) -> list[str]:
+    errors: list[str] = []
+    control_total = 0
+    treatment_total = 0
+    normalized_control_values: list[float] = []
+    normalized_treatment_values: list[float] = []
+    score_row_case_counts: dict[str, int] = {}
+    score_text = section_body(text, "Case Scores") or ""
+
+    for line in score_text.splitlines():
+        cells = markdown_table_cells(line)
+        if cells is None:
+            continue
+        if len(cells) != AB_SCORE_ROW_COLUMN_COUNT:
+            case = cells[0] if cells else "<unknown>"
+            errors.append(f"{relative}: malformed score row for {case}")
+            continue
+
+        case = cells[0]
+        category = cells[1]
+        control_score = parse_score_fraction(cells[2])
+        treatment_score = parse_score_fraction(cells[3])
+        lift = parse_lift(cells[4])
+        control_norm = parse_percent(cells[5])
+        treatment_norm = parse_percent(cells[6])
+        normalized_lift = parse_normalized_lift(cells[7])
+        if (
+            control_score is None
+            or treatment_score is None
+            or lift is None
+            or control_norm is None
+            or treatment_norm is None
+            or normalized_lift is None
+        ):
+            errors.append(f"{relative}: unparseable score row for {case}")
+            continue
+
+        score_row_case_counts[case] = score_row_case_counts.get(case, 0) + 1
+        control, control_den = control_score
+        treatment, treatment_den = treatment_score
+
+        control_total += control
+        treatment_total += treatment
+        if category not in AB_ALLOWED_SCORE_CATEGORIES:
+            errors.append(f"{relative}: {case} unknown category {category}")
+        expected_category = AB_PILOT_CASE_SCORE_CATEGORIES.get(case)
+        if expected_category is not None and category != expected_category:
+            errors.append(f"{relative}: {case} expected category {expected_category}, found {category}")
+        if control_den != treatment_den:
+            errors.append(f"{relative}: {case} control and treatment denominators must match")
+
+        expected_denominator = AB_EXPECTED_SCORE_DENOMINATORS.get(category)
+        if expected_denominator is not None and (
+            control_den != expected_denominator or treatment_den != expected_denominator
+        ):
+            errors.append(f"{relative}: {case} expected denominator {expected_denominator} for category {category}")
+
+        if control_den <= 0 or treatment_den <= 0:
+            errors.append(f"{relative}: {case} score denominator must be greater than 0")
+            continue
+        if not 0 <= control <= control_den:
+            errors.append(f"{relative}: {case} control score must be between 0 and {control_den}")
+        if not 0 <= treatment <= treatment_den:
+            errors.append(f"{relative}: {case} treatment score must be between 0 and {treatment_den}")
+
+        expected_control_norm = control / control_den * 100
+        expected_treatment_norm = treatment / treatment_den * 100
+        expected_normalized_lift = expected_treatment_norm - expected_control_norm
+        normalized_control_values.append(expected_control_norm)
+        normalized_treatment_values.append(expected_treatment_norm)
+
+        if control_den == treatment_den and lift != treatment - control:
+            errors.append(f"{relative}: {case} lift {lift:+d} does not equal treatment minus control {treatment - control:+d}")
+        if not close_percent(control_norm, expected_control_norm):
+            errors.append(f"{relative}: {case} control normalized {control_norm:.1f}% does not match {expected_control_norm:.1f}%")
+        if not close_percent(treatment_norm, expected_treatment_norm):
+            errors.append(f"{relative}: {case} treatment normalized {treatment_norm:.1f}% does not match {expected_treatment_norm:.1f}%")
+        if not close_percent(normalized_lift, expected_normalized_lift):
+            errors.append(f"{relative}: {case} normalized lift {normalized_lift:+.1f} pp does not match {expected_normalized_lift:+.1f} pp")
+
+    expected_score_slugs = tuple(AB_PILOT_CASE_SCORE_SLUGS.values())
+    expected_score_slug_set = set(expected_score_slugs)
+    for case_slug, count in score_row_case_counts.items():
+        if case_slug not in expected_score_slug_set:
+            errors.append(f"{relative}: unexpected score row for {case_slug}")
+            continue
+        if count != 1:
+            errors.append(f"{relative}: duplicate score row for {case_slug}")
+
+    for case_slug in expected_score_slugs:
+        if case_slug not in score_row_case_counts:
+            errors.append(f"{relative}: missing score row for {case_slug}")
+
+    if not normalized_control_values:
+        errors.append(f"{relative}: no parseable case score rows")
+        return errors
+
+    total_control = numeric_metadata_value(text, "- Total control score")
+    total_treatment = numeric_metadata_value(text, "- Total treatment score")
+    total_lift = numeric_metadata_value(text, "- Total lift")
+    if total_control != control_total:
+        errors.append(f"{relative}: total control score {total_control} does not equal case sum {control_total}")
+    if total_treatment != treatment_total:
+        errors.append(f"{relative}: total treatment score {total_treatment} does not equal case sum {treatment_total}")
+    if total_lift != treatment_total - control_total:
+        errors.append(f"{relative}: total lift {total_lift} does not equal treatment minus control {treatment_total - control_total:+d}")
+
+    mean_control = sum(normalized_control_values) / len(normalized_control_values)
+    mean_treatment = sum(normalized_treatment_values) / len(normalized_treatment_values)
+    mean_lift = mean_treatment - mean_control
+    recorded_mean_control = percentage_metadata_value(text, "- Mean normalized control")
+    recorded_mean_treatment = percentage_metadata_value(text, "- Mean normalized treatment")
+    recorded_mean_lift = percentage_metadata_value(text, "- Mean normalized lift")
+    if recorded_mean_control is None or not close_percent(recorded_mean_control, mean_control):
+        errors.append(f"{relative}: mean normalized control does not match {mean_control:.1f}%")
+    if recorded_mean_treatment is None or not close_percent(recorded_mean_treatment, mean_treatment):
+        errors.append(f"{relative}: mean normalized treatment does not match {mean_treatment:.1f}%")
+    if recorded_mean_lift is None or not close_percent(recorded_mean_lift, mean_lift):
+        errors.append(f"{relative}: mean normalized lift does not match {mean_lift:+.1f} pp")
+
+    return errors
 
 
 def has_markdown_section(text: str, heading: str) -> bool:
@@ -325,6 +600,51 @@ def validate_required_sections(path: pathlib.Path, relative: str, sections: list
     return errors
 
 
+def parse_coverage_matrix_refs(text: str) -> dict[str, list[str]]:
+    matrix_body = section_body(text, "Coverage Matrix") or ""
+    matrix_refs: dict[str, list[str]] = {}
+
+    for line in matrix_body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- ") or ":" not in stripped:
+            continue
+
+        topic, refs_text = stripped[2:].split(":", 1)
+        matrix_refs.setdefault(topic.strip(), []).extend(re.findall(r"`([^`]+)`", refs_text))
+
+    return matrix_refs
+
+
+def validate_coverage_matrix(path: pathlib.Path, relative: str) -> list[str]:
+    text = read_text(path)
+    if section_body(text, "Coverage Matrix") is None:
+        return []
+
+    errors: list[str] = []
+    expected_refs = required_case_refs()
+    refs_by_topic = parse_coverage_matrix_refs(text)
+    ref_counts: dict[str, int] = {}
+
+    for refs in refs_by_topic.values():
+        for ref in refs:
+            ref_counts[ref] = ref_counts.get(ref, 0) + 1
+
+    for ref in sorted(expected_refs):
+        if ref_counts.get(ref, 0) == 0:
+            errors.append(f"{relative}: coverage matrix missing case {ref}")
+        elif ref_counts[ref] > 1:
+            errors.append(f"{relative}: coverage matrix duplicates case {ref}")
+
+    for ref in sorted(ref for ref in ref_counts if ref not in expected_refs):
+        errors.append(f"{relative}: coverage matrix unknown case {ref}")
+
+    for ref, topic in sorted(COVERAGE_MATRIX_TOPIC_REQUIREMENTS.items()):
+        if ref not in refs_by_topic.get(topic, []):
+            errors.append(f"{relative}: coverage matrix must list {ref} under {topic}")
+
+    return errors
+
+
 def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
     missing_paths: list[str] = []
     errors: list[str] = []
@@ -363,9 +683,13 @@ def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
         for case in AB_PILOT_CASES:
             if case not in pilot_text:
                 errors.append(f"evaluation/ab/pilot-results.md: missing pilot case {case}")
-        for score_label in ["Control score", "Treatment score", "Lift", "Pass/fail change", "Notes"]:
+        for score_label in AB_SCORE_COLUMNS:
             if score_label not in pilot_text:
                 errors.append(f"evaluation/ab/pilot-results.md: missing score column {score_label}")
+        for limitation in AB_LIMITATION_LABELS:
+            if limitation not in pilot_text:
+                errors.append(f"evaluation/ab/pilot-results.md: missing limitation {limitation}")
+        errors.extend(validate_ab_score_math(pilot_text, "evaluation/ab/pilot-results.md"))
 
     control_text = read_text(repo / "evaluation/ab/control-instructions.md")
     if control_text and (
@@ -373,6 +697,10 @@ def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
         or "Do not load, invoke, mention, or rely on the DDIA system design skill" not in control_text
     ):
         errors.append("evaluation/ab/control-instructions.md: must forbid using ddia-system-design")
+    if control_text and "Use whatever clear answer structure you normally would" not in control_text:
+        errors.append("evaluation/ab/control-instructions.md: must allow ordinary structured architecture reasoning")
+    if control_text and any(phrase in control_text.lower() for phrase in AB_CONTROL_BANNED_PHRASES):
+        errors.append("evaluation/ab/control-instructions.md: must allow ordinary structured architecture reasoning")
 
     treatment_text = read_text(repo / "evaluation/ab/treatment-instructions.md")
     if treatment_text and "Use ddia-system-design" not in treatment_text:
@@ -627,16 +955,21 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
     missing_paths = []
     case_errors = []
 
-    for category, relative_dir in CASE_DIRS.items():
-        case_dir = repo / relative_dir
+    for category, directory in CASE_DIRS.items():
+        case_dir = repo / directory
         case_files = sorted(case_dir.glob("*.md")) if case_dir.exists() else []
         case_counts[category] = len(case_files)
+        relative_dir = directory.as_posix()
+
+        for required_case in REQUIRED_CASE_FILES[category]:
+            if not (repo / required_case).exists():
+                case_errors.append(f"{required_case.as_posix()}: missing required case")
 
         if not case_dir.exists():
-            missing_paths.append(relative_dir.as_posix())
+            missing_paths.append(relative_dir)
         expected_count = EXPECTED_CASE_COUNTS[category]
         if len(case_files) != expected_count:
-            case_errors.append(f"{relative_dir.as_posix()}: expected {expected_count} cases, found {len(case_files)}")
+            case_errors.append(f"{relative_dir}: expected {expected_count} cases, found {len(case_files)}")
 
         for case_path in case_files:
             relative = case_path.relative_to(repo).as_posix()
@@ -663,6 +996,7 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
         missing_paths.append(GUIDE_PATH)
     else:
         guide_errors.extend(validate_required_sections(guide_path, GUIDE_PATH, GUIDE_SECTIONS))
+        guide_errors.extend(validate_coverage_matrix(guide_path, GUIDE_PATH))
 
     ab_missing_paths, ab_errors = validate_ab_assets(repo)
     missing_paths.extend(ab_missing_paths)

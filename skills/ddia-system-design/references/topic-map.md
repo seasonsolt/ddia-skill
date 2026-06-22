@@ -1,6 +1,9 @@
 # DDIA Topic Map For Backend Architecture
 
 Use this map to connect a user's architecture problem to the right review lens.
+Each topic lists what it is used for, what to ask, and what to watch for. For
+decision rules see `system-design-principles.md`; for review questions see
+`architecture-review-checklists.md`.
 
 ## Reliability, Scalability, Maintainability
 

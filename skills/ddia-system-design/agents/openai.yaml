@@ -1,3 +1,7 @@
+# Codex skill agent interface for ddia-system-design.
+# This file registers the skill's user-facing display name, short description,
+# and default prompt with the Codex skill runtime. It is not loaded by the
+# skill body itself; SKILL.md is the skill body.
 interface:
   display_name: "DDIA System Design"
   short_description: "Apply DDIA-style backend architecture review."

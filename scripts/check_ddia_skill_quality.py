@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
+"""Deterministic quality checker for the ddia-system-design skill assets.
+
+The REFERENCE_SECTIONS and REFERENCE_ROLE_TERMS lists below are intentional
+regression guards, not accidental coupling. They pin the set of sections and
+role terms each reference file must cover so that removing a topic or term is a
+visible, reviewable change. When intentionally adding or removing a section,
+update both the reference file and the corresponding list here in the same
+commit.
+"""
 import argparse
 import json
 import pathlib
+import re
 from typing import Any
 
 
@@ -198,36 +208,54 @@ def validate_rubric(repo: pathlib.Path) -> list[str]:
     return errors
 
 
-def validate_prompts(repo: pathlib.Path) -> tuple[int, list[str], list[str]]:
+def validate_prompts(repo: pathlib.Path) -> tuple[int, list[str], list[str], list[str]]:
     prompt_dir = repo / "evaluation" / "prompts"
+    prompt_paths = []
+    if prompt_dir.exists():
+        prompt_paths.extend(path.relative_to(repo).as_posix() for path in sorted(prompt_dir.glob("*.md")))
+    for relative in PROMPT_FILES:
+        if relative not in prompt_paths:
+            prompt_paths.append(relative)
+
     prompt_count = len(list(prompt_dir.glob("*.md"))) if prompt_dir.exists() else 0
     invalid_files = []
     structure_errors = []
-    if prompt_count != 5:
-        structure_errors.append(f"evaluation/prompts: expected 5 prompt files, found {prompt_count}")
+    prompt_titles = []
+    if prompt_count < 5:
+        structure_errors.append(f"evaluation/prompts: expected at least 5 prompt files, found {prompt_count}")
 
-    for relative, heading in PROMPT_FILES.items():
+    for relative in prompt_paths:
         text = read_text(repo / relative)
         if not text.strip():
             invalid_files.append(f"{relative}: file is empty")
             continue
-        if heading not in text.splitlines()[0]:
-            invalid_files.append(f"{relative}: missing heading {heading}")
+
+        first_line = text.splitlines()[0]
+        if relative in PROMPT_FILES:
+            heading = PROMPT_FILES[relative]
+            if heading not in first_line:
+                invalid_files.append(f"{relative}: missing heading {heading}")
+        elif not re.match(r"^# Prompt \d+:", first_line):
+            invalid_files.append(f"{relative}: missing heading # Prompt N:")
+
+        if first_line.startswith("# "):
+            prompt_titles.append(first_line[2:].strip())
         if "Use the DDIA system design skill" not in text:
             invalid_files.append(f"{relative}: missing skill usage instruction")
         if len(text.strip()) < 120:
             invalid_files.append(f"{relative}: content is too short")
-    return prompt_count, invalid_files, structure_errors
+    return prompt_count, invalid_files, structure_errors, prompt_titles
 
 
-def validate_results_template(repo: pathlib.Path) -> list[str]:
+def validate_results_template(repo: pathlib.Path, prompt_titles: list[str] | None = None) -> list[str]:
     relative = "evaluation/results-template.md"
     text = read_text(repo / relative)
     lower = text.lower()
+    prompt_titles = prompt_titles or PROMPT_TITLES
     errors = []
     if not text.strip():
         return [f"{relative}: file is empty"]
-    for index, title in enumerate(PROMPT_TITLES):
+    for index, title in enumerate(prompt_titles):
         if title.lower() not in lower:
             errors.append(f"{relative}: missing {title}")
             continue
@@ -242,7 +270,7 @@ def validate_results_template(repo: pathlib.Path) -> list[str]:
         for label in ["Total score", "Pass", "Notes"]:
             if f"- {label.lower()}:" not in section:
                 errors.append(f"{relative}: {title} missing {label}")
-        if index == len(PROMPT_TITLES) - 1 and "overall decision" not in lower:
+        if index == len(prompt_titles) - 1 and "overall decision" not in lower:
             errors.append(f"{relative}: missing Overall Decision")
     return errors
 
@@ -278,11 +306,11 @@ def validate_references(repo: pathlib.Path) -> list[str]:
 
 def check_repo(repo: pathlib.Path) -> dict[str, Any]:
     missing_files = [relative for relative in REQUIRED_FILES if not (repo / relative).exists()]
-    prompt_count, invalid_prompt_files, prompt_structure_errors = validate_prompts(repo)
+    prompt_count, invalid_prompt_files, prompt_structure_errors, prompt_titles = validate_prompts(repo)
     invalid_files = []
     invalid_files.extend(validate_rubric(repo))
     invalid_files.extend(invalid_prompt_files)
-    invalid_files.extend(validate_results_template(repo))
+    invalid_files.extend(validate_results_template(repo, prompt_titles))
     structure_errors = []
     structure_errors.extend(prompt_structure_errors)
     structure_errors.extend(validate_references(repo))
@@ -317,7 +345,7 @@ def main() -> int:
         or report["missing_terms"]
         or report["invalid_files"]
         or report["structure_errors"]
-        or report["prompt_count"] != 5
+        or report["prompt_count"] < 5
     ):
         return 1
     return 0

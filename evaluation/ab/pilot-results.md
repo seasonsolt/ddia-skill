@@ -22,13 +22,13 @@
 
 ## Case Scores
 
-| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| order-consistency | good | 7/10 | 9/10 | +2 | fail to pass | Treatment added clearer source-of-truth boundaries, idempotency, reconciliation, and falsifiable checks. |
-| replica-lag | good | 7/10 | 10/10 | +3 | fail to pass | Treatment named read-your-writes and monotonic reads, then tied mitigations to session routing and lag metrics. |
-| cache-as-truth | bad | 8/12 | 11/12 | +3 | fail to pass | Treatment rejected Redis as authoritative for payment decisions and kept financial invariants in transactional storage. |
-| exactly-once-trap | adversarial | 8/12 | 11/12 | +3 | fail to pass | Treatment challenged end-to-end exactly-once and added idempotency boundaries for external side effects and ledger writes. |
-| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | diagnostic improvement | Treatment gave a scoped default, listed missing requirements, and avoided overconfident database selection. |
+| Case | Category | Control score | Treatment score | Lift | Control normalized | Treatment normalized | Normalized lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added clearer source-of-truth boundaries, idempotency, reconciliation, and falsifiable checks. |
+| replica-lag | good | 7/10 | 10/10 | +3 | 70.0% | 100.0% | +30.0 pp | fail to pass | Treatment named read-your-writes and monotonic reads, then tied mitigations to session routing and lag metrics. |
+| cache-as-truth | bad | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment rejected Redis as authoritative for payment decisions and kept financial invariants in transactional storage. |
+| exactly-once-trap | adversarial | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment challenged end-to-end exactly-once and added idempotency boundaries for external side effects and ledger writes. |
+| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | 66.7% | 83.3% | +16.7 pp | diagnostic improvement | Treatment gave a scoped default, listed missing requirements, and avoided overconfident database selection. |
 
 ## Dimension Differences
 
@@ -151,9 +151,22 @@ Operational checks: validate core queries, permission checks, audit write rate, 
 
 Tests: prototype permission queries, audit-log retention, tenant isolation, migration rollback, and expected high-volume workflows before adding specialized stores.
 
+## Limitations
+
+- Self-evaluation bias: the same agent family generated and scored the pilot, so scores may favor the skill-enabled response style.
+- Response-shape/rubric alignment: treatment instructions ask for sections that map closely to the answer-quality rubric.
+- Single model: the pilot only covers GPT-5 Codex.
+- Single run: each case has one control response and one treatment response.
+- No variance estimate: the pilot does not report repeated-run mean, minimum, maximum, or range.
+- Non-random case selection: the five cases were selected for coverage, not sampled randomly.
+- Process-compliance rubric not scored: this pilot scores answer quality only.
+
 ## Overall Decision
 
 - Total control score: 38
 - Total treatment score: 51
 - Total lift: +13
-- Limitations: This is a five-case pilot scored from preserved paired responses. It is not statistical proof.
+- Mean normalized control: 68.0%
+- Mean normalized treatment: 91.3%
+- Mean normalized lift: +23.3 pp
+- Limitations: In one five-case paired pilot run, treatment scored higher than control and four must-pass cases crossed the pass threshold. This is directional pilot evidence, not statistical proof.
