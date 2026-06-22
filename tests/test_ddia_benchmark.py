@@ -813,7 +813,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         matrix_text = matrix_path.read_text(encoding="utf-8")
 
         for case_id in EXPECTED_EXPANDED_CODING_AB_CASES:
-            self.assertIn(f"`{case_id}`", matrix_text)
+            self.assertIn(f"| {case_id} |", matrix_text)
 
         for topic in EXPECTED_CODING_COVERAGE_TOPICS:
             self.assertIn(topic, matrix_text)

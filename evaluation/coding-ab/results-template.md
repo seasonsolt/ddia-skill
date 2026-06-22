@@ -18,11 +18,24 @@ Use the blind judge rubric: base dimensions are worth up to 12 points. Adversari
 
 | Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| good-cache-aside-product-preview | good |  |  |  |  |  |
+| good-outbox-relay-idempotent-consumer | good |  |  |  |  |  |
+| good-replica-session-token-routing | good |  |  |  |  |  |
+| good-expand-contract-schema-rollout | good |  |  |  |  |  |
 | checkout-cache-as-truth | bad |  |  |  |  |  |
-| payment-exactly-once-trap | adversarial |  |  |  |  |  |
 | order-outbox-missing | bad |  |  |  |  |  |
 | profile-replica-lag | bad |  |  |  |  |  |
+| seat-booking-write-skew | bad |  |  |  |  |  |
+| schema-migration-breaking-reader | bad |  |  |  |  |  |
+| stream-consumer-non-idempotent | bad |  |  |  |  |  |
+| hot-partition-tenant-counter | bad |  |  |  |  |  |
+| retry-storm-no-dlq | bad |  |  |  |  |  |
+| missing-reconciliation-observability | bad |  |  |  |  |  |
+| payment-exactly-once-trap | adversarial |  |  |  |  |  |
 | redis-distributed-lock-money-transfer | adversarial |  |  |  |  |  |
+| multi-region-last-write-wins-profile | adversarial |  |  |  |  |  |
+| elasticsearch-authorization-trap | adversarial |  |  |  |  |  |
+| kafka-total-ordering-trap | adversarial |  |  |  |  |  |
 
 ## Dimension Differences
 
