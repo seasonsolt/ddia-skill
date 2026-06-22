@@ -153,6 +153,18 @@ Compare the new results against the previous benchmark result.
 
 
 class DdiaBenchmarkTest(unittest.TestCase):
+    def test_current_repo_benchmark_is_complete(self):
+        checker = load_checker()
+
+        report = checker.check_benchmark(REPO)
+
+        self.assertEqual(report["case_counts"], {"good": 5, "bad": 4, "adversarial": 4})
+        self.assertEqual(report["missing_paths"], [])
+        self.assertEqual(report["case_errors"], [])
+        self.assertEqual(report["rubric_errors"], [])
+        self.assertEqual(report["template_errors"], [])
+        self.assertEqual(report["guide_errors"], [])
+
     def test_checker_accepts_complete_benchmark(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
