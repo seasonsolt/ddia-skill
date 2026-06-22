@@ -58,6 +58,50 @@ No deliberate trap; this case checks normal DDIA-style system design reasoning.
 """
 
 
+EXPANDED_CASES = {
+    "evaluation/cases/good/06-quantitative-workload-capacity.md": case_text(
+        title="Quantitative Workload Capacity",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/07-batch-backfill-reconciliation.md": case_text(
+        title="Batch Backfill Reconciliation",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/08-schema-evolution-rollout.md": case_text(
+        title="Schema Evolution Rollout",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/09-correct-cache-use.md": case_text(
+        title="Correct Cache Use",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/10-observability-runbook.md": case_text(
+        title="Observability Runbook",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/good/11-idempotency-outbox.md": case_text(
+        title="Idempotency Outbox",
+        category="good",
+        scoring_profile="good",
+    ),
+    "evaluation/cases/bad/05-capacity-cost-handwave.md": case_text(
+        title="Capacity Cost Handwave",
+        category="bad",
+        scoring_profile="anti-pattern",
+    ),
+    "evaluation/cases/adversarial/05-global-linearizable-writes.md": case_text(
+        title="Global Linearizable Writes",
+        category="adversarial",
+        scoring_profile="anti-pattern",
+    ),
+}
+
+
 def make_complete_benchmark(root: pathlib.Path) -> None:
     for index in range(1, 6):
         write(
@@ -150,6 +194,12 @@ Use answer quality and process compliance separately.
 Compare the new results against the previous benchmark result.
 """,
     )
+
+
+def make_expanded_benchmark(root: pathlib.Path) -> None:
+    make_complete_benchmark(root)
+    for relative, text in EXPANDED_CASES.items():
+        write(root / relative, text)
 
 
 AB_REQUIRED_FILES = [
@@ -369,6 +419,21 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(report["template_errors"], [])
         self.assertEqual(report["guide_errors"], [])
         self.assertEqual(report["ab_errors"], [])
+
+    def test_checker_reports_missing_required_expanded_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_expanded_benchmark(repo)
+            missing_case = repo / "evaluation/cases/good/06-quantitative-workload-capacity.md"
+            missing_case.unlink()
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/cases/good/06-quantitative-workload-capacity.md: missing required case",
+            report["case_errors"],
+        )
 
     def test_benchmark_checker_reports_missing_ab_file(self):
         checker = load_checker()
