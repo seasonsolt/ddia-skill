@@ -41,6 +41,15 @@ The benchmark intentionally covers these DDIA-style backend design behaviors:
 5. Score both patches with `evaluation/coding-ab/blind-llm-judge.md`.
 6. Preserve the raw patches and judge JSON in a copy of `evaluation/coding-ab/results-template.md`.
 
+Generate answer prompts with the redacted renderer instead of sending raw case
+files to the answer model:
+
+```bash
+PYTHON=/Users/Thin/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
+$PYTHON scripts/render_coding_ab_prompt.py --repo . --arm control --case evaluation/coding-ab/cases/checkout-cache-as-truth.md > /tmp/ddia-control-prompt.md
+$PYTHON scripts/render_coding_ab_prompt.py --repo . --arm treatment --case evaluation/coding-ab/cases/checkout-cache-as-truth.md > /tmp/ddia-treatment-prompt.md
+```
+
 The coding A/B track does not require compiling Java. The judge scores whether
 the patch moves correctness into the right source-of-truth, transaction,
 idempotency, retry, and verification boundaries.

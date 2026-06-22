@@ -15,6 +15,14 @@ def load_checker():
     return module
 
 
+def load_prompt_renderer():
+    module_path = REPO / "scripts" / "render_coding_ab_prompt.py"
+    spec = importlib.util.spec_from_file_location("render_coding_ab_prompt", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def write(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -827,6 +835,52 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
         for case_id in EXPECTED_EXPANDED_CODING_AB_CASES:
             self.assertIn(f"| {case_id} |", template)
+
+    def test_coding_ab_prompt_renderer_strips_judge_only_sections(self):
+        renderer = load_prompt_renderer()
+        case_path = REPO / "evaluation" / "coding-ab" / "cases" / "checkout-cache-as-truth.md"
+
+        prompt = renderer.render_prompt(
+            repo=REPO,
+            case_path=case_path,
+            arm="control",
+            skill_path=REPO / "skills" / "ddia-system-design" / "SKILL.md",
+        )
+
+        self.assertIn("## Scenario", prompt)
+        self.assertIn("## Java Code", prompt)
+        self.assertIn("## Task", prompt)
+        self.assertIn("Coding Control Instructions", prompt)
+        self.assertNotIn("# Coding Case", prompt)
+        self.assertNotIn("Case ID:", prompt)
+        self.assertNotIn("Primary DDIA topics", prompt)
+        self.assertNotIn("## Flawed Java", prompt)
+        self.assertNotIn("Expected DDIA Reasoning", prompt)
+        self.assertNotIn("Strong Patch Signals", prompt)
+        self.assertNotIn("Weak Patch Patterns", prompt)
+        self.assertNotIn("Scoring Notes", prompt)
+
+    def test_coding_ab_treatment_prompt_includes_skill_text_but_no_judge_key(self):
+        renderer = load_prompt_renderer()
+        case_path = REPO / "evaluation" / "coding-ab" / "cases" / "checkout-cache-as-truth.md"
+
+        prompt = renderer.render_prompt(
+            repo=REPO,
+            case_path=case_path,
+            arm="treatment",
+            skill_path=REPO / "skills" / "ddia-system-design" / "SKILL.md",
+        )
+
+        self.assertIn("Coding Treatment Instructions", prompt)
+        self.assertIn("# DDIA System Design", prompt)
+        self.assertIn("## Scenario", prompt)
+        self.assertIn("## Java Code", prompt)
+        self.assertNotIn("# Coding Case", prompt)
+        self.assertNotIn("Case ID:", prompt)
+        self.assertNotIn("Primary DDIA topics", prompt)
+        self.assertNotIn("## Flawed Java", prompt)
+        self.assertNotIn("Expected DDIA Reasoning", prompt)
+        self.assertNotIn("Strong Patch Signals", prompt)
 
     def test_checker_accepts_complete_benchmark(self):
         checker = load_checker()

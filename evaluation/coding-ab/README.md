@@ -8,6 +8,11 @@ Compare Java coding-review answers from a control prompt against treatment answe
 
 Run each case twice with the same model and context window. One run uses the control instructions and one run uses the treatment instructions. Hide the mapping as Response A and Response B, collect both answers, then score with the blind LLM judge before revealing which answer used the skill.
 
+Use `scripts/render_coding_ab_prompt.py` to generate answer prompts. Do not feed
+the raw case file to the answer model, because raw case files include title,
+case metadata, topic metadata, and judge-only sections such as expected
+reasoning, strong patch signals, weak patch patterns, and scoring notes.
+
 ## Case Set
 
 The expanded coding suite has 18 cases:
