@@ -34,6 +34,10 @@ installed `ddia-system-design` skill text.
 The blind judge saw the full case, the rubric, Response A, and Response B. It
 did not see the control/treatment mapping.
 
+This pilot used one case from the original five-case pilot suite. The expanded
+18-case suite should be used for the next run. Future runs should use the
+prompt renderer instead of hand-built prompts.
+
 ## Hidden Mapping
 
 - Response A: control
@@ -123,7 +127,8 @@ boundary. That is exactly the distinction this coding track was meant to test.
   database transaction.
 - Add an answer-generation helper that automatically strips judge-only sections
   before running future A/B pilots.
-- Rerun all five coding cases with at least three response samples per arm.
+- Rerun the expanded 18-case coding suite with at least three response samples
+  per arm.
 
 ## Limitations
 

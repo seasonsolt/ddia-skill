@@ -34,18 +34,20 @@ The benchmark intentionally covers these DDIA-style backend design behaviors:
 
 ## How To Run Coding A/B
 
-1. Pick a Java patch case from `evaluation/coding-ab/cases/`.
-2. Generate a control patch with `evaluation/coding-ab/control-instructions.md`.
-3. Generate a treatment patch with `evaluation/coding-ab/treatment-instructions.md`.
-4. Randomize both patches as Response A and Response B.
-5. Score both patches with `evaluation/coding-ab/blind-llm-judge.md`.
-6. Preserve the raw patches and judge JSON in a copy of `evaluation/coding-ab/results-template.md`.
+For coding A/B runs:
+
+1. Render prompts with `scripts/render_coding_ab_prompt.py`.
+2. Run control and treatment with the same model and settings.
+3. Randomize Response A and Response B before judging.
+4. Score with `evaluation/coding-ab/blind-llm-judge.md`.
+5. Archive the generated responses, mapping, and judge JSON under `evaluation/coding-ab/runs/<date>-<case-id>/`.
+6. Record scores in `evaluation/coding-ab/results-template.md` or a dated result file.
 
 Generate answer prompts with the redacted renderer instead of sending raw case
 files to the answer model:
 
 ```bash
-PYTHON=/Users/Thin/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
+PYTHON=python3
 $PYTHON scripts/render_coding_ab_prompt.py --repo . --arm control --case evaluation/coding-ab/cases/checkout-cache-as-truth.md > /tmp/ddia-control-prompt.md
 $PYTHON scripts/render_coding_ab_prompt.py --repo . --arm treatment --case evaluation/coding-ab/cases/checkout-cache-as-truth.md > /tmp/ddia-treatment-prompt.md
 ```

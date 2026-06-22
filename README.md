@@ -118,6 +118,12 @@ scored by a blind LLM judge rubric and do not need to compile. This track is
 intended to produce stronger evidence than prose-only scoring because it checks
 whether the skill changes the code boundary, not only the explanation.
 
+The coding A/B benchmark now has 18 Java cases: 4 good cases, 9 bad cases, and
+5 adversarial cases. The coverage matrix is in
+[`evaluation/coding-ab/coverage-matrix.md`](evaluation/coding-ab/coverage-matrix.md).
+Use `scripts/render_coding_ab_prompt.py` for answer generation so judge-only
+sections are not leaked to the model.
+
 The first real coding A/B pilot is recorded in
 [`evaluation/coding-ab/pilot-results.md`](evaluation/coding-ab/pilot-results.md).
 It is a useful negative result: the treatment beat the control by one point, but
@@ -158,11 +164,11 @@ benchmark pass and record results in
 ## Validation
 
 Run the deterministic checks from the repository root. The checkers use
-`str | None` union syntax and require Python 3.10 or newer; the codex runtime
-below provides Python 3.12.13.
+`str | None` union syntax and require Python 3.10 or newer. Set `PYTHON` to
+`python3`, or substitute another Python 3.10+ interpreter path if needed.
 
 ```bash
-PYTHON=/Users/Thin/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
+PYTHON=python3
 $PYTHON -m unittest discover -s tests -v
 $PYTHON scripts/check_ddia_skill_quality.py --repo .
 $PYTHON scripts/check_ddia_benchmark.py --repo .
