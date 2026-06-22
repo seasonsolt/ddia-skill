@@ -86,6 +86,13 @@ AB_PILOT_CASES = [
     "evaluation/cases/adversarial/02-exactly-once-trap.md",
     "evaluation/cases/bad/04-vague-startup-architecture.md",
 ]
+AB_PILOT_CASE_SCORE_SLUGS = {
+    "evaluation/cases/good/01-order-consistency.md": "order-consistency",
+    "evaluation/cases/good/04-replica-lag.md": "replica-lag",
+    "evaluation/cases/bad/01-cache-as-truth.md": "cache-as-truth",
+    "evaluation/cases/adversarial/02-exactly-once-trap.md": "exactly-once-trap",
+    "evaluation/cases/bad/04-vague-startup-architecture.md": "vague-startup-architecture",
+}
 AB_REQUIRED_PHRASES = {
     "evaluation/ab/README.md": [
         "control",
@@ -154,15 +161,6 @@ AB_CONTROL_BANNED_PHRASES = [
     "do not use the ddia skill response shape",
     "do not use any similar structure",
 ]
-AB_SCORE_ROW_PATTERN = re.compile(
-    r"^\| (?P<case>[^|]+) \| (?P<category>[^|]+) \| "
-    r"(?P<control>\d+)/(?P<control_den>\d+) \| "
-    r"(?P<treatment>\d+)/(?P<treatment_den>\d+) \| "
-    r"(?P<lift>[+-]\d+) \| "
-    r"(?P<control_norm>\d+(?:\.\d+)?)% \| "
-    r"(?P<treatment_norm>\d+(?:\.\d+)?)% \| "
-    r"(?P<normalized_lift>[+-]\d+(?:\.\d+)?) pp \| "
-)
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -215,29 +213,78 @@ def close_percent(actual: float, expected: float) -> bool:
     return abs(actual - expected) <= 0.15
 
 
+def parse_score_fraction(value: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r"(\d+)/(\d+)", value.strip())
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def parse_percent(value: str) -> float | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)%", value.strip())
+    return float(match.group(1)) if match else None
+
+
+def parse_normalized_lift(value: str) -> float | None:
+    match = re.fullmatch(r"([+-]\d+(?:\.\d+)?) pp", value.strip())
+    return float(match.group(1)) if match else None
+
+
+def parse_lift(value: str) -> int | None:
+    match = re.fullmatch(r"([+-]\d+)", value.strip())
+    return int(match.group(1)) if match else None
+
+
+def markdown_table_cells(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if not cells or cells[0] == "Case" or all(set(cell) <= {"-", ":"} for cell in cells):
+        return None
+    return cells
+
+
 def validate_ab_score_math(text: str, relative: str) -> list[str]:
     errors: list[str] = []
     control_total = 0
     treatment_total = 0
     normalized_control_values: list[float] = []
     normalized_treatment_values: list[float] = []
+    score_row_cases: set[str] = set()
 
     for line in text.splitlines():
-        match = AB_SCORE_ROW_PATTERN.match(line)
-        if not match:
+        cells = markdown_table_cells(line)
+        if cells is None or len(cells) < 8:
             continue
-        case = match.group("case").strip()
-        control = int(match.group("control"))
-        control_den = int(match.group("control_den"))
-        treatment = int(match.group("treatment"))
-        treatment_den = int(match.group("treatment_den"))
-        lift = int(match.group("lift"))
-        control_norm = float(match.group("control_norm"))
-        treatment_norm = float(match.group("treatment_norm"))
-        normalized_lift = float(match.group("normalized_lift"))
+
+        case = cells[0]
+        control_score = parse_score_fraction(cells[2])
+        treatment_score = parse_score_fraction(cells[3])
+        lift = parse_lift(cells[4])
+        control_norm = parse_percent(cells[5])
+        treatment_norm = parse_percent(cells[6])
+        normalized_lift = parse_normalized_lift(cells[7])
+        if (
+            control_score is None
+            or treatment_score is None
+            or lift is None
+            or control_norm is None
+            or treatment_norm is None
+            or normalized_lift is None
+        ):
+            continue
+
+        score_row_cases.add(case)
+        control, control_den = control_score
+        treatment, treatment_den = treatment_score
 
         control_total += control
         treatment_total += treatment
+        if control_den <= 0 or treatment_den <= 0:
+            errors.append(f"{relative}: {case} score denominator must be greater than 0")
+            continue
+
         expected_control_norm = control / control_den * 100
         expected_treatment_norm = treatment / treatment_den * 100
         expected_normalized_lift = expected_treatment_norm - expected_control_norm
@@ -252,6 +299,10 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
             errors.append(f"{relative}: {case} treatment normalized {treatment_norm:.1f}% does not match {expected_treatment_norm:.1f}%")
         if not close_percent(normalized_lift, expected_normalized_lift):
             errors.append(f"{relative}: {case} normalized lift {normalized_lift:+.1f} pp does not match {expected_normalized_lift:+.1f} pp")
+
+    for case_slug in AB_PILOT_CASE_SCORE_SLUGS.values():
+        if case_slug not in score_row_cases:
+            errors.append(f"{relative}: missing score row for {case_slug}")
 
     if not normalized_control_values:
         errors.append(f"{relative}: no parseable case score rows")

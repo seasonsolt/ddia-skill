@@ -547,6 +547,74 @@ class DdiaBenchmarkTest(unittest.TestCase):
             ab_errors,
         )
 
+    def test_checker_rejects_pilot_missing_score_row_for_required_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| cache-as-truth | bad | 8/12 | 11/12 | +3 | 66.7% | 91.7% | +25.0 pp | fail to pass | Treatment rejected Redis as source of truth. |\n",
+                "",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 30")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 40")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +10")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 68.4%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 91.3%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +22.9 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing score row for cache-as-truth",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_score_zero_denominator(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("7/10", "7/0", 1),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency score denominator must be greater than 0",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_normalized_score_drift(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("70.0%", "71.0%", 1),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency control normalized 71.0% does not match 70.0%",
+            ab_errors,
+        )
+
     def test_checker_rejects_pilot_missing_normalized_scores(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
