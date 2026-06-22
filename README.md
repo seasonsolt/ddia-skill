@@ -138,7 +138,7 @@ python3 scripts/check_ddia_benchmark.py --repo .
 
 Current validation status:
 
-- 36 unit tests pass.
+- The bundled Python unit suite passes.
 - `check_ddia_skill_quality.py` reports no missing files, terms, invalid files, or structure errors.
 - `check_ddia_benchmark.py` reports `good: 5`, `bad: 4`, `adversarial: 4`, with no benchmark errors.
 
