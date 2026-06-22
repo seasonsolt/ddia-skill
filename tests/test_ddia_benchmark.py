@@ -647,6 +647,35 @@ class DdiaBenchmarkTest(unittest.TestCase):
             ab_errors,
         )
 
+    def test_checker_rejects_pilot_duplicate_score_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |\n"
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |\n",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 45")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 60")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +15")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 68.3%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 91.1%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +22.8 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: duplicate score row for order-consistency",
+            ab_errors,
+        )
+
     def test_checker_rejects_pilot_score_zero_denominator(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:

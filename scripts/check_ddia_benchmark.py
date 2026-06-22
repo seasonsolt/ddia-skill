@@ -262,7 +262,7 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
     treatment_total = 0
     normalized_control_values: list[float] = []
     normalized_treatment_values: list[float] = []
-    score_row_cases: set[str] = set()
+    score_row_case_counts: dict[str, int] = {}
     score_text = section_body(text, "Case Scores") or ""
 
     for line in score_text.splitlines():
@@ -293,7 +293,7 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
             errors.append(f"{relative}: unparseable score row for {case}")
             continue
 
-        score_row_cases.add(case)
+        score_row_case_counts[case] = score_row_case_counts.get(case, 0) + 1
         control, control_den = control_score
         treatment, treatment_den = treatment_score
 
@@ -338,11 +338,15 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
 
     expected_score_slugs = tuple(AB_PILOT_CASE_SCORE_SLUGS.values())
     expected_score_slug_set = set(expected_score_slugs)
-    for case_slug in sorted(score_row_cases - expected_score_slug_set):
-        errors.append(f"{relative}: unexpected score row for {case_slug}")
+    for case_slug, count in score_row_case_counts.items():
+        if case_slug not in expected_score_slug_set:
+            errors.append(f"{relative}: unexpected score row for {case_slug}")
+            continue
+        if count != 1:
+            errors.append(f"{relative}: duplicate score row for {case_slug}")
 
     for case_slug in expected_score_slugs:
-        if case_slug not in score_row_cases:
+        if case_slug not in score_row_case_counts:
             errors.append(f"{relative}: missing score row for {case_slug}")
 
     if not normalized_control_values:
