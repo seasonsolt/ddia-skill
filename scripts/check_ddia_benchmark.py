@@ -5,7 +5,36 @@ import pathlib
 import re
 
 
-EXPECTED_CASE_COUNTS = {"good": 5, "bad": 4, "adversarial": 4}
+REQUIRED_CASE_FILES = {
+    "good": [
+        pathlib.Path("evaluation/cases/good/01-order-consistency.md"),
+        pathlib.Path("evaluation/cases/good/02-event-pipeline.md"),
+        pathlib.Path("evaluation/cases/good/03-database-choice.md"),
+        pathlib.Path("evaluation/cases/good/04-replica-lag.md"),
+        pathlib.Path("evaluation/cases/good/05-derived-data.md"),
+        pathlib.Path("evaluation/cases/good/06-quantitative-workload-capacity.md"),
+        pathlib.Path("evaluation/cases/good/07-batch-backfill-reconciliation.md"),
+        pathlib.Path("evaluation/cases/good/08-schema-evolution-rollout.md"),
+        pathlib.Path("evaluation/cases/good/09-correct-cache-use.md"),
+        pathlib.Path("evaluation/cases/good/10-observability-runbook.md"),
+        pathlib.Path("evaluation/cases/good/11-idempotency-outbox.md"),
+    ],
+    "bad": [
+        pathlib.Path("evaluation/cases/bad/01-cache-as-truth.md"),
+        pathlib.Path("evaluation/cases/bad/02-replica-lag-denial.md"),
+        pathlib.Path("evaluation/cases/bad/03-hot-partition.md"),
+        pathlib.Path("evaluation/cases/bad/04-vague-startup-architecture.md"),
+        pathlib.Path("evaluation/cases/bad/05-capacity-cost-handwave.md"),
+    ],
+    "adversarial": [
+        pathlib.Path("evaluation/cases/adversarial/01-tool-first-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/02-exactly-once-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/03-distributed-lock-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/04-schema-evolution-trap.md"),
+        pathlib.Path("evaluation/cases/adversarial/05-global-linearizable-writes.md"),
+    ],
+}
+EXPECTED_CASE_COUNTS = {category: len(paths) for category, paths in REQUIRED_CASE_FILES.items()}
 AB_EXPECTED_SCORE_DENOMINATORS = {"good": 10, "bad": 12, "adversarial": 12}
 CASE_DIRS = {
     "good": pathlib.Path("evaluation/cases/good"),
@@ -520,16 +549,21 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
     missing_paths = []
     case_errors = []
 
-    for category, relative_dir in CASE_DIRS.items():
-        case_dir = repo / relative_dir
+    for category, directory in CASE_DIRS.items():
+        case_dir = repo / directory
         case_files = sorted(case_dir.glob("*.md")) if case_dir.exists() else []
         case_counts[category] = len(case_files)
+        relative_dir = directory.as_posix()
+
+        for required_case in REQUIRED_CASE_FILES[category]:
+            if not (repo / required_case).exists():
+                case_errors.append(f"{required_case.as_posix()}: missing required case")
 
         if not case_dir.exists():
-            missing_paths.append(relative_dir.as_posix())
+            missing_paths.append(relative_dir)
         expected_count = EXPECTED_CASE_COUNTS[category]
         if len(case_files) != expected_count:
-            case_errors.append(f"{relative_dir.as_posix()}: expected {expected_count} cases, found {len(case_files)}")
+            case_errors.append(f"{relative_dir}: expected {expected_count} cases, found {len(case_files)}")
 
         for case_path in case_files:
             relative = case_path.relative_to(repo).as_posix()

@@ -102,24 +102,93 @@ EXPANDED_CASES = {
 }
 
 
+BASE_CASES = [
+    (
+        "evaluation/cases/good/01-order-consistency.md",
+        "Order Consistency",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/02-event-pipeline.md",
+        "Event Pipeline",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/03-database-choice.md",
+        "Database Choice",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/04-replica-lag.md",
+        "Replica Lag",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/good/05-derived-data.md",
+        "Derived Data",
+        "good",
+        "good",
+    ),
+    (
+        "evaluation/cases/bad/01-cache-as-truth.md",
+        "Cache As Truth",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/bad/02-replica-lag-denial.md",
+        "Replica Lag Denial",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/bad/03-hot-partition.md",
+        "Hot Partition",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/bad/04-vague-startup-architecture.md",
+        "Vague Startup Architecture",
+        "bad",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/01-tool-first-trap.md",
+        "Tool First Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/02-exactly-once-trap.md",
+        "Exactly Once Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/03-distributed-lock-trap.md",
+        "Distributed Lock Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+    (
+        "evaluation/cases/adversarial/04-schema-evolution-trap.md",
+        "Schema Evolution Trap",
+        "adversarial",
+        "anti-pattern",
+    ),
+]
+
+
 def make_complete_benchmark(root: pathlib.Path) -> None:
-    for index in range(1, 6):
+    for relative, title, category, scoring_profile in BASE_CASES:
         write(
-            root / f"evaluation/cases/good/{index:02d}-good-case.md",
-            case_text(title=f"Good Case {index}", category="good", scoring_profile="good"),
-        )
-    for index in range(1, 5):
-        write(
-            root / f"evaluation/cases/bad/{index:02d}-bad-case.md",
-            case_text(title=f"Bad Case {index}", category="bad", scoring_profile="anti-pattern"),
-        )
-        write(
-            root / f"evaluation/cases/adversarial/{index:02d}-adversarial-case.md",
-            case_text(
-                title=f"Adversarial Case {index}",
-                category="adversarial",
-                scoring_profile="anti-pattern",
-            ),
+            root / relative,
+            case_text(title=title, category=category, scoring_profile=scoring_profile),
         )
 
     write(
@@ -194,13 +263,8 @@ Use answer quality and process compliance separately.
 Compare the new results against the previous benchmark result.
 """,
     )
-
-
-def make_expanded_benchmark(root: pathlib.Path) -> None:
-    make_complete_benchmark(root)
     for relative, text in EXPANDED_CASES.items():
         write(root / relative, text)
-
 
 AB_REQUIRED_FILES = [
     "evaluation/ab/README.md",
@@ -395,7 +459,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
         report = checker.check_benchmark(REPO)
 
-        self.assertEqual(report["case_counts"], {"good": 5, "bad": 4, "adversarial": 4})
+        self.assertEqual(report["case_counts"], {"good": 11, "bad": 5, "adversarial": 5})
         self.assertEqual(report["missing_paths"], [])
         self.assertEqual(report["case_errors"], [])
         self.assertEqual(report["rubric_errors"], [])
@@ -412,7 +476,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
             report = checker.check_benchmark(repo)
 
-        self.assertEqual(report["case_counts"], {"good": 5, "bad": 4, "adversarial": 4})
+        self.assertEqual(report["case_counts"], {"good": 11, "bad": 5, "adversarial": 5})
         self.assertEqual(report["missing_paths"], [])
         self.assertEqual(report["case_errors"], [])
         self.assertEqual(report["rubric_errors"], [])
@@ -424,7 +488,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
-            make_expanded_benchmark(repo)
+            make_complete_benchmark(repo)
             missing_case = repo / "evaluation/cases/good/06-quantitative-workload-capacity.md"
             missing_case.unlink()
 
@@ -452,7 +516,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
-            case_path = repo / "evaluation/cases/bad/01-bad-case.md"
+            case_path = repo / "evaluation/cases/bad/01-cache-as-truth.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace("## Strong Answer Signals", "## Strong Signals"),
                 encoding="utf-8",
@@ -461,7 +525,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             report = checker.check_benchmark(repo)
 
         self.assertIn(
-            "evaluation/cases/bad/01-bad-case.md: missing section Strong Answer Signals",
+            "evaluation/cases/bad/01-cache-as-truth.md: missing section Strong Answer Signals",
             report["case_errors"],
         )
 
@@ -470,7 +534,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
-            case_path = repo / "evaluation/cases/adversarial/01-adversarial-case.md"
+            case_path = repo / "evaluation/cases/adversarial/01-tool-first-trap.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace("Category: adversarial", "Category: good"),
                 encoding="utf-8",
@@ -479,7 +543,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             report = checker.check_benchmark(repo)
 
         self.assertIn(
-            "evaluation/cases/adversarial/01-adversarial-case.md: expected Category: adversarial",
+            "evaluation/cases/adversarial/01-tool-first-trap.md: expected Category: adversarial",
             report["case_errors"],
         )
 
@@ -488,7 +552,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
-            case_path = repo / "evaluation/cases/bad/02-bad-case.md"
+            case_path = repo / "evaluation/cases/bad/02-replica-lag-denial.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace(
                     "Scoring profile: anti-pattern",
@@ -500,7 +564,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             report = checker.check_benchmark(repo)
 
         self.assertIn(
-            "evaluation/cases/bad/02-bad-case.md: expected Scoring profile: anti-pattern",
+            "evaluation/cases/bad/02-replica-lag-denial.md: expected Scoring profile: anti-pattern",
             report["case_errors"],
         )
 
