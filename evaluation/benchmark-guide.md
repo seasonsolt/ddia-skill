@@ -10,9 +10,11 @@ The benchmark intentionally covers these DDIA-style backend design behaviors:
 
 - Source-of-truth and derived-data boundaries: `good/01-order-consistency.md`, `bad/01-cache-as-truth.md`, `good/05-derived-data.md`
 - Event pipeline correctness: `good/02-event-pipeline.md`, `good/11-idempotency-outbox.md`, `adversarial/02-exactly-once-trap.md`
-- Storage and database choice: `good/03-database-choice.md`, `good/08-schema-evolution-rollout.md`, `adversarial/04-schema-evolution-trap.md`
+- Storage and database choice: `good/03-database-choice.md`
+- Schema evolution and compatibility: `good/08-schema-evolution-rollout.md`, `adversarial/04-schema-evolution-trap.md`
 - Replication and consistency: `good/04-replica-lag.md`, `bad/02-replica-lag-denial.md`, `adversarial/05-global-linearizable-writes.md`
-- Partitioning and hot spots: `bad/03-hot-partition.md`, `adversarial/03-distributed-lock-trap.md`
+- Partitioning and hot spots: `bad/03-hot-partition.md`
+- Transactions, coordination, and consensus: `adversarial/03-distributed-lock-trap.md`
 - Quantitative workload and cost reasoning: `good/06-quantitative-workload-capacity.md`, `bad/05-capacity-cost-handwave.md`
 - Batch/backfill and reconciliation: `good/07-batch-backfill-reconciliation.md`
 - Correct cache use: `good/09-correct-cache-use.md`

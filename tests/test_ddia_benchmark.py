@@ -250,6 +250,10 @@ def make_complete_benchmark(root: pathlib.Path) -> None:
 
 Use this benchmark to prove usefulness and drive iteration.
 
+## Coverage Matrix
+
+- Source-of-truth and derived-data boundaries
+
 ## How To Run
 
 Run every case in evaluation/cases and score the response.
@@ -483,6 +487,27 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(report["template_errors"], [])
         self.assertEqual(report["guide_errors"], [])
         self.assertEqual(report["ab_errors"], [])
+
+    def test_checker_rejects_missing_coverage_matrix(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            guide_path = repo / "evaluation/benchmark-guide.md"
+            guide_path.write_text(
+                guide_path.read_text(encoding="utf-8").replace(
+                    "## Coverage Matrix\n\n- Source-of-truth and derived-data boundaries\n\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/benchmark-guide.md: missing section Coverage Matrix",
+            report["guide_errors"],
+        )
 
     def test_checker_reports_missing_required_expanded_case(self):
         checker = load_checker()

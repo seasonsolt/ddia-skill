@@ -79,6 +79,7 @@ RESULT_TEMPLATE_SECTIONS = [
 ]
 GUIDE_SECTIONS = [
     "Purpose",
+    "Coverage Matrix",
     "How To Run",
     "How To Score",
     "Regression Review",
