@@ -127,6 +127,8 @@ case uses a single denominator for both arms, which is true in the pilot.
 - `evaluation/ab/pilot-results.md`
   - Add normalized score table or columns.
   - Add detailed limitations.
+  - State that this pilot scores answer quality only and does not score the
+    process-compliance rubric.
   - Reframe the overall decision as a single paired pilot observation.
 - `scripts/check_ddia_benchmark.py`
   - Add A/B score and limitation validation.
@@ -151,11 +153,71 @@ The deterministic checker should reject incomplete A/B results when:
   - single run
   - no variance estimate
   - non-random case selection
+  - process-compliance rubric not scored
 - score totals do not reconcile
 - total lift does not equal treatment total minus control total
 
 The checker should not decide whether the pilot proves the skill works. It only
 checks whether the result is structurally honest and arithmetically consistent.
+
+## Deferred Gaps
+
+This pass intentionally hardens the credibility of the current A/B evidence
+before expanding scope. The following review findings remain valid and should
+be handled by later passes.
+
+### Benchmark Coverage Gaps
+
+Defer these to a benchmark case-expansion pass:
+
+- Quantitative workload and capacity planning case with concrete rates, data
+  sizes, latency targets, and growth assumptions.
+- Consensus or multi-region write case covering leader election, quorum,
+  conflict handling, or linearizability trade-offs.
+- Batch processing and backfill case covering idempotent outputs, replay,
+  late data, joins, and reconciliation.
+- Database schema evolution case covering expand-contract rollout, online
+  migration, backfill, and rollback.
+- Correct cache-use good case covering cache-aside, write-through, TTL,
+  invalidation, and rebuild trade-offs.
+- Observability and runbook case where metrics, alerts, dashboards, and
+  operator actions are the main design output.
+- Idempotency and outbox/inbox case where duplicate requests, retries, and
+  crash windows are the primary concern.
+- Capacity and cost case that asks whether the design can handle 10x growth and
+  what it costs to operate.
+
+### Skill Tuning Gaps
+
+Defer these to a skill-tuning pass:
+
+- Clarify whether `skills/ddia-system-design/agents/openai.yaml` is required
+  packaging metadata, and test or remove it accordingly.
+- Add a short worked example to `SKILL.md` to calibrate answer granularity.
+- Add a narrow-follow-up exemption so the seven-section response shape does not
+  force verbose answers for small questions.
+- Add explicit "do not use for" boundaries for pure algorithms, frontend
+  component choices, and simple single-node CRUD questions.
+- Reduce repeated concepts across reference files so topic maps map, principles
+  decide, and checklists ask.
+
+### Test Infrastructure Gaps
+
+Defer these to a test-infrastructure pass:
+
+- Add behavior-oriented regression evidence beyond structural file checks.
+- Revisit the `prompt_count == 5` constraint so first-pass evaluation prompts
+  can evolve without excessive checker churn.
+- Decide whether heading-coupled tests should remain strict regression guards
+  or become easier to evolve.
+- Add coverage for `skills/ddia-system-design/agents/openai.yaml` if the file
+  remains part of the package.
+- Separate private reading/PDF extraction tests from skill-package tests in
+  reporting so test counts do not overstate skill regression coverage.
+- Document the relationship between historical `evaluation/rubric.md` and
+  benchmark `evaluation/rubrics/answer-quality.md`.
+- Replace hardcoded local PDF fallback paths with explicit environment-variable
+  configuration or skip behavior.
 
 ## Stronger Next-Run Protocol
 
@@ -185,4 +247,3 @@ This improvement pass is successful when:
 - The pilot result includes normalized scores and detailed limitations.
 - The benchmark checker catches score arithmetic drift and missing limitations.
 - The full unit suite and benchmark checker pass.
-
