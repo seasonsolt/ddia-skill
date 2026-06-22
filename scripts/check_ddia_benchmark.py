@@ -308,6 +308,7 @@ CODING_AB_REQUIRED_PHRASES = {
         "Score Response A and Response B before revealing",
         "Reveal the mapping only after",
         "0, 1, or 2 points",
+        "Good coding cases pass",
         "Bad coding cases pass",
         "Adversarial coding cases pass",
     ],

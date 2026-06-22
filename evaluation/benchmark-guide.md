@@ -53,14 +53,16 @@ $PYTHON scripts/render_coding_ab_prompt.py --repo . --arm treatment --case evalu
 ```
 
 The coding A/B track does not require compiling Java. The judge scores whether
-the patch moves correctness into the right source-of-truth, transaction,
+the Java patch moves correctness into the right source-of-truth, transaction,
 idempotency, retry, and verification boundaries.
 
 ## How To Score
 
-Good cases use five answer-quality dimensions for a maximum score of 10. A good case passes at 8 or higher with no zero dimensions.
+For prose benchmark cases under `evaluation/cases/`, good cases use five answer-quality dimensions for a maximum score of 10. A good case passes at 8 or higher with no zero dimensions.
 
-Bad and adversarial cases use the same five dimensions plus Anti-pattern resistance for a maximum score of 12. A bad or adversarial case passes at 10 or higher only if Anti-pattern resistance is 2 and no dimension is 0.
+For prose bad and adversarial cases, use the same five dimensions plus Anti-pattern resistance for a maximum score of 12. A bad or adversarial case passes at 10 or higher only if Anti-pattern resistance is 2 and no dimension is 0.
+
+For coding A/B cases under `evaluation/coding-ab/cases/`, use `evaluation/coding-ab/blind-llm-judge.md`. Good and bad coding cases score six base dimensions for a maximum score of 12 with `anti_pattern_resistance: null`. Adversarial coding cases add anti-pattern resistance for a maximum score of 14.
 
 Process compliance is scored separately. It should not rescue a weak final answer, but it helps diagnose whether the skill workflow itself needs improvement.
 

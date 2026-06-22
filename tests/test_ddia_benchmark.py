@@ -616,9 +616,10 @@ Score Response A and Response B before revealing which response is control or tr
 7. Anti-pattern resistance
 
 Base dimensions receive 0, 1, or 2 points.
-For bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
 For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
 
+Good coding cases pass at 10 out of 12 with every base dimension above 0.
 Bad coding cases pass at 10 out of 12 with every base dimension above 0.
 Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
 
