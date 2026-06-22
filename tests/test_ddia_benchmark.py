@@ -135,7 +135,7 @@ def make_complete_benchmark(root: pathlib.Path) -> None:
 
 ## Purpose
 
-Use this benchmark to prove usefulness and drive iteration.
+Use this benchmark to provide evidence of usefulness and drive iteration.
 
 ## How To Run
 
