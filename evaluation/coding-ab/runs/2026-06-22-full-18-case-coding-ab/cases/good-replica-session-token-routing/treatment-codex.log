@@ -1,0 +1,283 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/good-replica-session-token-routing/treatment-response.md -
+
+## stdout
+You’re asking for a DDIA-style Java review of this profile service, including whether the current replica-read pattern needs a patch, and what operational checks keep it correct in practice.
+
+### 1) Assumptions and workload shape
+- Primary DB is the source of truth; replica is an optimization for read latency.
+- Client is expected to send a monotonic `minVersion` token after an update.
+- Workload is read-heavy and can tolerate slight staleness, but must satisfy read-your-writes behavior when a client uses the returned token.
+- Availability matters: reads should usually succeed even during replica incidents.
+
+### 2) Recommendation
+- Keep the design: query replica first, then fallback to primary.
+- A Java patch is needed: `readProfile` must handle replica failures explicitly and still fallback to primary, otherwise a replica outage turns a replica-optimization into a hard read failure.
+- No claim of global linearizability: this is “best-effort read-your-writes via version token,” not full serializable read semantics.
+
+Smallest practical patch:
+
+```java
+public Profile readProfile(UUID userId, long minVersion) {
+    // primary is the source of truth; replica is a consistency-optimized fast path
+    if (minVersion <= 0) {
+        return primary.findById(userId);
+    }
+
+    try {
+        return replica.findByIdAtLeastVersion(userId, minVersion)
+                       .orElseGet(() -> {
+                           // optional metric: replica fallback on version lag
+                           return primary.findById(userId);
+                       });
+    } catch (Exception e) {
+        // optional metric: replica read error/fallback
+        // log warning with userId/minVersion
+        return primary.findById(userId);
+    }
+}
+```
+
+### 3) Key trade-offs
+- Replica-first keeps low-latency reads under normal conditions.
+- Fallback to primary guarantees correctness path when replica is behind or unavailable, but with higher latency on lag/incident events.
+- Not retrying replica blindly avoids extra load during outage; if desired, add a bounded retry (single quick attempt with timeout) rather than indefinite loops.
+
+### 4) Failure modes
+- Replication lag: primary has higher version than replica; `minVersion`-based check avoids this via fallback.
+- Replica transient failure: currently uncaught, causing exception instead of successful fallback.
+- Bad token inputs (`minVersion <= 0` or stale by client): behavior must be explicit (`primary` for non-positive, optional strict validation).
+- Duplicate update retries: repeated writes may create extra version bumps if callers retry blindly.
+
+### 5) Consistency and correctness implications
+- This is a distributed data problem because state is duplicated across primary/replica with asynchronous propagation.
+- The version marker is a client-coordination mechanism, not a distributed transaction protocol.
+- `updateDisplayNameReturningRow` must return the committed version in one atomic DB operation (`UPDATE ... RETURNING` or equivalent in same transaction) so the token is valid.
+- `readProfile` guarantees monotonic read for that client token, not global snapshot guarantees across arbitrary readers.
+
+### 6) Operational visibility
+- Track `replica_fallback_count` (version lag + timeout/error fallsbacks).
+- Track `replica_read_error_count` and `replica_read_latency_ms`.
+- Track `fallback_to_primary_count` and `primary_read_latency_ms`.
+- Track `max_replication_lag_ms` and sampled `primary_version - replica_version` deltas.
+- Alert on high `replica_fallback_count` / high lag while traffic is high; that is a user-facing staleness risk.
+
+### 7) Tests or experiments to validate
+- Unit/integration tests:
+  - stale replica path returns primary when version is behind.
+  - replica miss with version satisfied returns replica.
+  - replica exception triggers primary fallback successfully.
+  - `minVersion <= 0` routes to primary (or documented behavior).
+- Concurrency test:
+  - two writers, one reader with token, ensure read-your-writes contract holds for token-bearing caller.
+- Fault injection:
+  - simulate replica delay, timeout, and network error; verify no hard read failures.
+- Idempotency safety test (if retry semantics expected):
+  - retry same display-name update should either be harmless or explicitly deduplicated.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7b-39f7-73c2-abcd-1e434d49e679
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+A profile service returns the saved profile after an update and includes a version marker for the client to pass on later profile reads. The team asks whether this should be simplified by sending every profile read to the main database.
+
+## Java Code
+
+```java
+public final class ProfileService {
+    private final ProfilePrimaryRepository primary;
+    private final ProfileReplicaRepository replica;
+
+    public UpdatedProfile updateDisplayName(UUID userId, String displayName) {
+        Profile saved = primary.updateDisplayNameReturningRow(userId, displayName);
+        return new UpdatedProfile(saved, saved.version());
+    }
+
+    public Profile readProfile(UUID userId, long minVersion) {
+        Optional<Profile> fromReplica = replica.findByIdAtLeastVersion(userId, minVersion);
+        return fromReplica.orElseGet(() -> primary.findById(userId));
+    }
+}
+```
+
+## Task
+
+Review the code, assess whether a Java-oriented patch is needed, and justify the operational checks that would protect this design.
+
+codex
+You’re asking for a DDIA-style Java review of this profile service, including whether the current replica-read pattern needs a patch, and what operational checks keep it correct in practice.
+
+### 1) Assumptions and workload shape
+- Primary DB is the source of truth; replica is an optimization for read latency.
+- Client is expected to send a monotonic `minVersion` token after an update.
+- Workload is read-heavy and can tolerate slight staleness, but must satisfy read-your-writes behavior when a client uses the returned token.
+- Availability matters: reads should usually succeed even during replica incidents.
+
+### 2) Recommendation
+- Keep the design: query replica first, then fallback to primary.
+- A Java patch is needed: `readProfile` must handle replica failures explicitly and still fallback to primary, otherwise a replica outage turns a replica-optimization into a hard read failure.
+- No claim of global linearizability: this is “best-effort read-your-writes via version token,” not full serializable read semantics.
+
+Smallest practical patch:
+
+```java
+public Profile readProfile(UUID userId, long minVersion) {
+    // primary is the source of truth; replica is a consistency-optimized fast path
+    if (minVersion <= 0) {
+        return primary.findById(userId);
+    }
+
+    try {
+        return replica.findByIdAtLeastVersion(userId, minVersion)
+                       .orElseGet(() -> {
+                           // optional metric: replica fallback on version lag
+                           return primary.findById(userId);
+                       });
+    } catch (Exception e) {
+        // optional metric: replica read error/fallback
+        // log warning with userId/minVersion
+        return primary.findById(userId);
+    }
+}
+```
+
+### 3) Key trade-offs
+- Replica-first keeps low-latency reads under normal conditions.
+- Fallback to primary guarantees correctness path when replica is behind or unavailable, but with higher latency on lag/incident events.
+- Not retrying replica blindly avoids extra load during outage; if desired, add a bounded retry (single quick attempt with timeout) rather than indefinite loops.
+
+### 4) Failure modes
+- Replication lag: primary has higher version than replica; `minVersion`-based check avoids this via fallback.
+- Replica transient failure: currently uncaught, causing exception instead of successful fallback.
+- Bad token inputs (`minVersion <= 0` or stale by client): behavior must be explicit (`primary` for non-positive, optional strict validation).
+- Duplicate update retries: repeated writes may create extra version bumps if callers retry blindly.
+
+### 5) Consistency and correctness implications
+- This is a distributed data problem because state is duplicated across primary/replica with asynchronous propagation.
+- The version marker is a client-coordination mechanism, not a distributed transaction protocol.
+- `updateDisplayNameReturningRow` must return the committed version in one atomic DB operation (`UPDATE ... RETURNING` or equivalent in same transaction) so the token is valid.
+- `readProfile` guarantees monotonic read for that client token, not global snapshot guarantees across arbitrary readers.
+
+### 6) Operational visibility
+- Track `replica_fallback_count` (version lag + timeout/error fallsbacks).
+- Track `replica_read_error_count` and `replica_read_latency_ms`.
+- Track `fallback_to_primary_count` and `primary_read_latency_ms`.
+- Track `max_replication_lag_ms` and sampled `primary_version - replica_version` deltas.
+- Alert on high `replica_fallback_count` / high lag while traffic is high; that is a user-facing staleness risk.
+
+### 7) Tests or experiments to validate
+- Unit/integration tests:
+  - stale replica path returns primary when version is behind.
+  - replica miss with version satisfied returns replica.
+  - replica exception triggers primary fallback successfully.
+  - `minVersion <= 0` routes to primary (or documented behavior).
+- Concurrency test:
+  - two writers, one reader with token, ensure read-your-writes contract holds for token-bearing caller.
+- Fault injection:
+  - simulate replica delay, timeout, and network error; verify no hard read failures.
+- Idempotency safety test (if retry semantics expected):
+  - retry same display-name update should either be harmless or explicitly deduplicated.
+tokens used
+13,271
+
+
+exit_code: 0

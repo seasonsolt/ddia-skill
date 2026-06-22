@@ -1,0 +1,20 @@
+{
+  "case_id": "profile-replica-lag",
+  "category": "bad",
+  "mapping": {
+    "A": "control",
+    "B": "treatment"
+  },
+  "control_total": 8,
+  "treatment_total": 10,
+  "denominator": 12,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 2,
+  "normalized_lift": 0.16666666666666674,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Identifies replica lag and read-your-writes correctly, and uses a version/timestamp marker to prefer replica while falling back to primary, so correctness is mostly addressed. However, it introduces a synchronous fixed-delay retry loop on replicas, which is brittle and still partially heuristic, and offers no explicit validation/metrics/testing beyond code changes; the patch quality is weakened by the sleep-based polling and incomplete operational guidance.",
+  "treatment_rationale": "Directly enforces read-your-writes for the write API by reading back from primary (or returning updated row if available), which cleanly matches the DDIA boundary for this request without routing all traffic to primary. It includes practical reasoning about asynchronous replica staleness, failure behavior, idempotency, and concrete operational checks/tests, while the Java patch is minimal and clearly correct for the stated goal.",
+  "judge_rationale": "Response B scores higher because it gives a simpler, production-safe read-your-writes fix with stronger operational guidance and avoids the polling/sleep anti-pattern, while preserving replica use for normal read traffic."
+}

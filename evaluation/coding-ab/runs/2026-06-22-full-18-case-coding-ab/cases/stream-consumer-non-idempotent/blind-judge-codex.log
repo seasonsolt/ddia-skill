@@ -1,0 +1,276 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/stream-consumer-non-idempotent/blind-judge-raw.json --output-schema /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/judge-output-schema.json -
+
+## stdout
+{"case_id":"stream-consumer-non-idempotent","category":"bad","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Strongest answer. It correctly identifies replay/duplicate delivery as the root issue and proposes durable idempotency keyed by event id with a unique constraint and atomic transaction for dedupe+points update. It explicitly addresses concurrency, crash/restart behavior, and includes observability + concrete duplicate/restart/concurrency tests."},"response_b":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":1,"idempotency_retry_safety":2,"operational_verification":0,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Correct core patch idea (atomic idempotent write path with ON CONFLICT+tx) but less rigorous than A. It does not explicitly discuss operational failure semantics, recovery checks, or a verification plan (no tests/metrics), so reliability reasoning is thinner despite solid code structure."},"winner":"A","rationale":"Response A is superior due to complete treatment of failure modes and explicit verification/observability guidance alongside the same essential idempotent transactional fix. Response B is largely correct but less complete on operational correctness evidence."}
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef82-eaad-7a13-80ff-7f652a2e3cfa
+--------
+user
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: stream-consumer-non-idempotent
+Category: bad
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: stream-consumer-non-idempotent
+
+Case ID: stream-consumer-non-idempotent
+Category: bad
+Language: Java
+Primary DDIA topics: message delivery, idempotency, transactions, recovery
+
+## Scenario
+
+A loyalty service grants points when payment events arrive from a stream. After a consumer restart and replay, some users received more points than expected for the same payment.
+
+## Flawed Java
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = event.amountCents() / 100;
+        loyalty.addPoints(event.userId(), points);
+    }
+}
+```
+
+## Task
+
+Review the handler and propose a patch that makes payment replay and duplicate delivery safe.
+
+## Expected DDIA Reasoning
+
+The answer should recognize that stream delivery, retries, and replay can duplicate side effects. A patch should record processed event IDs in durable storage or make the loyalty sink idempotent, and the deduplication record and points update should be committed atomically.
+
+## Strong Patch Signals
+
+- Uses a unique processed-message table keyed by payment or event id.
+- Updates points and records processing in the same database transaction.
+- Adds replay and duplicate-message tests that verify points are awarded once.
+
+## Weak Patch Patterns
+
+- Relies on Kafka exactly-once semantics alone while the database side effect remains non-idempotent.
+- Uses an in-memory set for processed events, losing state on restart.
+- Swallows duplicate exceptions after the points update already happened.
+
+## Scoring Notes
+
+- Award high scores for connecting at-least-once delivery to durable idempotency at the sink.
+- Penalize answers that only move offset commits without addressing duplicate side effects.
+
+
+## Response A
+
+A more natural version of your request: *“Please review this handler and propose the smallest Java patch that makes payment replay and duplicate delivery safe, while focusing on distributed-data concerns like source of truth, consistency, transactions, idempotency, failure modes, visibility, and tests.”*
+
+**1) Assumptions and workload shape**
+- Payment events are consumed from a stream with at least once delivery.
+- Restarts and replay can re-deliver the same `PaymentCaptured` event.
+- Each payment must contribute points exactly once per user.
+- `loyalty` storage is the system-of-record for balances.
+
+**2) Recommendation**
+The current handler is not idempotent: it always calls `addPoints`, so duplicates grant points multiple times.  
+Treat `paymentId` (or another unique event identifier) as an idempotency key and make the dedupe + balance update atomic in one DB transaction.
+
+Minimal patch pattern:
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = event.amountCents() / 100;
+        boolean applied = loyalty.applyPaymentOnce(event.paymentId(), event.userId(), points);
+        if (!applied) {
+            // duplicate replay; ignore
+        }
+    }
+}
+```
+
+```java
+@Transactional
+public boolean applyPaymentOnce(UUID paymentId, String userId, int points) {
+    int inserted = jdbc.update(
+        """
+        INSERT INTO processed_payments(payment_id, user_id, points)
+        VALUES (?, ?, ?)
+        ON CONFLICT (payment_id) DO NOTHING
+        """, paymentId, userId, points);
+
+    if (inserted == 0) {
+        return false;
+    }
+
+    jdbc.update("UPDATE loyalty_account SET points = points + ? WHERE user_id = ?", points, userId);
+    return true;
+}
+```
+
+Also add/ensure schema:
+- `processed_payments.payment_id` is `PRIMARY KEY` (or unique).
+- Optional: unique index per `(user_id, payment_id)` if needed for traceability.
+
+**3) Key trade-offs**
+- Adds one write + one read/insert check per event (small, usually acceptable).
+- Requires a durable idempotency store; this is a small schema change but gives a real correctness fix.
+- This improves against replay duplicates, not against missing/invalid payment IDs (if `paymentId` is absent you need synthetic keys or producer-side idempotency).
+
+**4) Failure modes**
+- Duplicate delivery: now swallowed after first successful insert.
+- Concurrent consumers processing same payment: only one insert succeeds due to unique constraint.
+- Crash between insert and commit: both insert and points update roll back together (transactional safety).
+- Crash after commit: event is safely marked processed, replay becomes no-op.
+- Null/unstable `paymentId`: system still vulnerable; must validate contract.
+
+**5) Consistency and correctness implications**
+- Source of truth remains the points table (balance), with `processed_payments` as write-ahead dedupe evidence.
+- Transaction boundary now defines correctness: “mark processed” and “apply points” are all-or-nothing.
+- You do not need global distributed consensus here; DB-level uniqueness plus single-writer atomic tx is enough for this duplicate class.
+
+**6) Operational visibility**
+- Count and expose metric: `loyalty.replay_deduped_events_total`.
+- Track failure metric: `loyalty.apply_payment_tx_failures_total`.
+- Alert on high duplicate ratio (may indicate producer retry storms).
+- Log with `paymentId`, `userId`, and result (`applied`/`skipped`) for incident tracing.
+
+**7) Tests to validate**
+- Duplicate event replay: same `paymentId` twice, balance changes once.
+- Concurrent duplicate replay (2+ threads): balance changes once and no deadlock/constraint exceptions.
+- Crash simulation before/after transaction: verify no partial update by forcing rollback.
+- Missing/invalid eventId test: assert event is rejected and measured as bad input.
+- Idempotency on full consumer restart/replay sequence: persisted balance remains correct.
+
+## Response B
+
+A more idiomatic version of your request is:  
+*Review this Java payment handler as a general backend task and propose a patch to make it safe when events are replayed or delivered more than once.*
+
+Use an idempotent, transactional write path so each payment event is applied at most once.
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public LoyaltyConsumer(LoyaltyRepository loyalty) {
+        this.loyalty = loyalty;
+    }
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = Math.max(event.amountCents(), 0) / 100;
+        // true => first time this event is seen, false => duplicate replay
+        loyalty.awardPointsForPaymentOnce(event.userId(), event.paymentId(), points);
+    }
+}
+```
+
+```java
+public interface LoyaltyRepository {
+    /**
+     * Applies points exactly once per payment event.
+     * @return true if points were added, false if this payment event was already processed.
+     */
+    boolean awardPointsForPaymentOnce(String userId, String paymentEventId, int points);
+}
+```
+
+```java
+// Example JDBC-style implementation
+@Transactional
+public boolean awardPointsForPaymentOnce(String userId, String paymentEventId, int points) {
+    int inserted = jdbcTemplate.update("""
+        INSERT INTO processed_payments (payment_event_id, user_id, processed_at)
+        VALUES (?, ?, NOW())
+        ON CONFLICT (payment_event_id) DO NOTHING
+        """, paymentEventId, userId);
+
+    if (inserted == 0) {
+        return false; // duplicate or replayed event
+    }
+
+    jdbcTemplate.update("""
+        INSERT INTO loyalty_balances (user_id, points)
+        VALUES (?, ?)
+        ON CONFLICT (user_id) DO UPDATE
+        SET points = loyalty_balances.points + EXCLUDED.points
+        """, userId, points);
+
+    return true;
+}
+```
+
+Required schema piece:
+
+- Add a unique constraint/index on `processed_payments(payment_event_id)` so duplicates are rejected safely under concurrent replay.
+
+Also critical: ensure `PaymentCaptured` carries a stable unique `paymentId` from the payment source; without that identifier, idempotency cannot be guaranteed correctly.
+
+codex
+{"case_id":"stream-consumer-non-idempotent","category":"bad","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Strongest answer. It correctly identifies replay/duplicate delivery as the root issue and proposes durable idempotency keyed by event id with a unique constraint and atomic transaction for dedupe+points update. It explicitly addresses concurrency, crash/restart behavior, and includes observability + concrete duplicate/restart/concurrency tests."},"response_b":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":1,"idempotency_retry_safety":2,"operational_verification":0,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Correct core patch idea (atomic idempotent write path with ON CONFLICT+tx) but less rigorous than A. It does not explicitly discuss operational failure semantics, recovery checks, or a verification plan (no tests/metrics), so reliability reasoning is thinner despite solid code structure."},"winner":"A","rationale":"Response A is superior due to complete treatment of failure modes and explicit verification/observability guidance alongside the same essential idempotent transactional fix. Response B is largely correct but less complete on operational correctness evidence."}
+tokens used
+4,812
+
+
+exit_code: 0

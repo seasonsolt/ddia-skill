@@ -1,0 +1,2 @@
+Response A: control
+Response B: treatment

@@ -1,0 +1,36 @@
+{
+  "case_id": "good-outbox-relay-idempotent-consumer",
+  "category": "good",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 12,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "A correctly preserves the outbox handoff and transactionality, explicitly rejects direct request-path Kafka publishing, and gives concrete operational checks for relay lag, retries, and duplicate drops. It also calls out the key idempotency/dedupe constraints and includes practical relay/monitoring guidance aligned with at-least-once semantics."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 1,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 1,
+      "anti_pattern_resistance": null
+    },
+    "total": 10,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "B gives mostly correct architectural reasoning and good failure-mode checks, but its patch weakens the core invariant by omitting the transactional boundary on order+outbox writes in the shown code, which undermines the atomic handoff guarantee. The rest is solid on idempotency and operational checks but the Java patch is less complete."
+  },
+  "winner": "A",
+  "rationale": "Response A is stronger and less risky: it keeps and reinforces the atomic outbox pattern, avoids the transactional hole introduced in B, and provides fuller implementation-level controls for publication and observability. Response B is directionally correct but loses points on correctness due to the missing request-path transaction in its patch."
+}

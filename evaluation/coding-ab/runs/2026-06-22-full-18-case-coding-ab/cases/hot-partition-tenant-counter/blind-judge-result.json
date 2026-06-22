@@ -1,0 +1,36 @@
+{
+  "case_id": "hot-partition-tenant-counter",
+  "category": "bad",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 11,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Strong: shards writes by random bucket and aggregates reads with pagination, directly addressing the hot partition. Explicitly names per-tenant derived totals and adds bounded retry/monitoring checks and read consistency caveats. Main weakness is retry semantics: bounded retries can overcount without idempotency keys, so idempotency safety is partial."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 1,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 1,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 8,
+    "denominator": 12,
+    "pass": false,
+    "rationale": "Correctly applies shard-key fan-out and exact batch read summation, but treats reads as exact without discussing staleness/derived-state semantics and provides almost no operational failure diagnostics. No retry/backoff policy or explicit handling of throttled writes; no idempotency discussion; verification guidance is minimal."
+  },
+  "winner": "A",
+  "rationale": "Response A is clearly superior: it is more complete on boundary reasoning, read/write scaling behavior, and operational checks, while B is a mostly mechanical sharding patch with weaker failure/idempotency handling and minimal verification guidance."
+}

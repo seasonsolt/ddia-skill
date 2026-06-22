@@ -1,0 +1,313 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/good-cache-aside-product-preview/treatment-response.md -
+
+## stdout
+You asked for a more natural phrasing: “Please review this Java cache-aside preview service, call out the distributed-data risks, and suggest the smallest practical patch needed for correctness, including assumptions, consistency guarantees, transaction boundaries, idempotency, failure modes, observability, and tests.”
+
+1. Assumptions and workload shape  
+- Primary workload is read-heavy (`preview(sku)`) with lower write frequency.  
+- `ProductRepository` (Postgres) is intended to be the source of truth.  
+- Cache is a latency optimization, not a source of correctness.  
+- A small staleness window (e.g., up to TTL seconds) is acceptable for product preview data.
+
+2. Key issues (findings)  
+1) Hard dependency on Redis: if `redis.get` or `redis.setex` throws, the request can fail even when Postgres is healthy. This is an availability and distributed-dependency failure.  
+2) Cache parse/serialization risk: corrupt/partial JSON in Redis causes runtime failure (`fromJson`) instead of a safe fallback.  
+3) Missing-product path is unsafe: `products.findForPreview(sku)` may return null and the code dereferences it.  
+4) Incoherence by design: cache and DB can diverge until TTL expires; acceptable only if explicitly tolerated.
+
+3. Recommendation and smallest Java patch  
+- Make cache non-authoritative and fail-open to DB on any cache problem.  
+- Add bounded fallback path and safe parsing.  
+- Handle “product not found” explicitly before constructing preview.  
+- Keep cache writes best-effort so DB reads still return.
+
+Minimal patch idea:
+
+```java
+public ProductPreview preview(String sku) {
+    String key = "product-preview:" + sku;
+
+    try {
+        String cached = redis.get(key);
+        if (cached != null) {
+            try {
+                return ProductPreview.fromJson(cached);
+            } catch (Exception parseEx) {
+                // metrics.increment("preview.cache.parse_error");
+            }
+        }
+    } catch (Exception redisEx) {
+        // metrics.increment("preview.cache.get_error");
+        // continue to DB on cache failures
+    }
+
+    Product product = products.findForPreview(sku);
+    if (product == null) {
+        return null; // or throw domain-specific NotFound
+    }
+
+    ProductPreview preview = ProductPreview.from(
+        product.id(),
+        product.name(),
+        product.thumbnailUrl()
+    );
+
+    try {
+        redis.setex(key, 300, preview.toJson());
+    } catch (Exception redisEx) {
+        // metrics.increment("preview.cache.set_error");
+    }
+
+    return preview;
+}
+```
+
+4. Source of truth, consistency guarantees, transaction boundaries, idempotency  
+- Source of truth: Postgres only. Redis is derived cache.  
+- Consistency: at-most staleness = TTL (5 min unless changed), not strong/linearizable across stores.  
+- Transaction boundaries: no distributed transaction exists between Postgres and Redis; cannot guarantee atomic cross-system read-write consistency.  
+- Idempotency: repeated cache writes (`setex` for same key/value) are idempotent; no correctness issue if retried.  
+- If stronger freshness is needed, set shorter TTL or wire write-path invalidation/refresh in the product update flow.
+
+5. Failure modes now mitigated by patch  
+- Redis outage/timeout: no total failure, service degrades to DB read.  
+- Cache corruption: bad JSON no longer crashes the preview path.  
+- Missing SKU: avoids null dereference and can return explicit not-found behavior.  
+- Partial redis failures no longer break critical path.
+
+6. Operational visibility to protect this design  
+- Track counters/gauges: cache hits, misses, get errors, parse errors, set errors, db fallback count, not-found count, latency by path.  
+- Add alert if `cache.get_error + cache.set_error` exceeds a small error budget.  
+- Alert on stale-hit ratio if you can detect preview-content freshness drift by adding a version/timestamp field in payload and checking it.  
+- Watch Redis eviction/TTL churn and key cardinality for memory pressure.
+
+7. Tests/experiments  
+- Cache unavailable test: force Redis connect/read failure and verify DB path still returns preview.  
+- Corrupt cache JSON test: write invalid payload and verify graceful DB fallback.  
+- Missing product test: repository returns null and service returns expected not-found behavior.  
+- Concurrency hot-key test: many misses on same SKU should remain correct and bounded in DB load.  
+- Chaos fault simulation: Redis latency spike + timeout injection to confirm fail-open behavior and alerting.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef78-f389-7f41-b281-ccd7fa532417
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+A product page service uses Redis to speed up product previews, but checkout and pricing still read from Postgres. The team asks whether this cache usage should be rejected or patched.
+
+## Java Code
+
+```java
+public final class ProductPreviewService {
+    private final RedisClient redis;
+    private final ProductRepository products;
+
+    public ProductPreview preview(String sku) {
+        String cached = redis.get("product-preview:" + sku);
+        if (cached != null) {
+            return ProductPreview.fromJson(cached);
+        }
+
+        Product product = products.findForPreview(sku);
+        ProductPreview preview = ProductPreview.from(product.id(), product.name(), product.thumbnailUrl());
+        redis.setex("product-preview:" + sku, 300, preview.toJson());
+        return preview;
+    }
+}
+```
+
+## Task
+
+Review the code, assess whether a Java-oriented patch is needed, and justify the operational checks that would protect this design.
+
+codex
+You asked for a more natural phrasing: “Please review this Java cache-aside preview service, call out the distributed-data risks, and suggest the smallest practical patch needed for correctness, including assumptions, consistency guarantees, transaction boundaries, idempotency, failure modes, observability, and tests.”
+
+1. Assumptions and workload shape  
+- Primary workload is read-heavy (`preview(sku)`) with lower write frequency.  
+- `ProductRepository` (Postgres) is intended to be the source of truth.  
+- Cache is a latency optimization, not a source of correctness.  
+- A small staleness window (e.g., up to TTL seconds) is acceptable for product preview data.
+
+2. Key issues (findings)  
+1) Hard dependency on Redis: if `redis.get` or `redis.setex` throws, the request can fail even when Postgres is healthy. This is an availability and distributed-dependency failure.  
+2) Cache parse/serialization risk: corrupt/partial JSON in Redis causes runtime failure (`fromJson`) instead of a safe fallback.  
+3) Missing-product path is unsafe: `products.findForPreview(sku)` may return null and the code dereferences it.  
+4) Incoherence by design: cache and DB can diverge until TTL expires; acceptable only if explicitly tolerated.
+
+3. Recommendation and smallest Java patch  
+- Make cache non-authoritative and fail-open to DB on any cache problem.  
+- Add bounded fallback path and safe parsing.  
+- Handle “product not found” explicitly before constructing preview.  
+- Keep cache writes best-effort so DB reads still return.
+
+Minimal patch idea:
+
+```java
+public ProductPreview preview(String sku) {
+    String key = "product-preview:" + sku;
+
+    try {
+        String cached = redis.get(key);
+        if (cached != null) {
+            try {
+                return ProductPreview.fromJson(cached);
+            } catch (Exception parseEx) {
+                // metrics.increment("preview.cache.parse_error");
+            }
+        }
+    } catch (Exception redisEx) {
+        // metrics.increment("preview.cache.get_error");
+        // continue to DB on cache failures
+    }
+
+    Product product = products.findForPreview(sku);
+    if (product == null) {
+        return null; // or throw domain-specific NotFound
+    }
+
+    ProductPreview preview = ProductPreview.from(
+        product.id(),
+        product.name(),
+        product.thumbnailUrl()
+    );
+
+    try {
+        redis.setex(key, 300, preview.toJson());
+    } catch (Exception redisEx) {
+        // metrics.increment("preview.cache.set_error");
+    }
+
+    return preview;
+}
+```
+
+4. Source of truth, consistency guarantees, transaction boundaries, idempotency  
+- Source of truth: Postgres only. Redis is derived cache.  
+- Consistency: at-most staleness = TTL (5 min unless changed), not strong/linearizable across stores.  
+- Transaction boundaries: no distributed transaction exists between Postgres and Redis; cannot guarantee atomic cross-system read-write consistency.  
+- Idempotency: repeated cache writes (`setex` for same key/value) are idempotent; no correctness issue if retried.  
+- If stronger freshness is needed, set shorter TTL or wire write-path invalidation/refresh in the product update flow.
+
+5. Failure modes now mitigated by patch  
+- Redis outage/timeout: no total failure, service degrades to DB read.  
+- Cache corruption: bad JSON no longer crashes the preview path.  
+- Missing SKU: avoids null dereference and can return explicit not-found behavior.  
+- Partial redis failures no longer break critical path.
+
+6. Operational visibility to protect this design  
+- Track counters/gauges: cache hits, misses, get errors, parse errors, set errors, db fallback count, not-found count, latency by path.  
+- Add alert if `cache.get_error + cache.set_error` exceeds a small error budget.  
+- Alert on stale-hit ratio if you can detect preview-content freshness drift by adding a version/timestamp field in payload and checking it.  
+- Watch Redis eviction/TTL churn and key cardinality for memory pressure.
+
+7. Tests/experiments  
+- Cache unavailable test: force Redis connect/read failure and verify DB path still returns preview.  
+- Corrupt cache JSON test: write invalid payload and verify graceful DB fallback.  
+- Missing product test: repository returns null and service returns expected not-found behavior.  
+- Concurrency hot-key test: many misses on same SKU should remain correct and bounded in DB load.  
+- Chaos fault simulation: Redis latency spike + timeout injection to confirm fail-open behavior and alerting.
+tokens used
+11,332
+
+
+exit_code: 0

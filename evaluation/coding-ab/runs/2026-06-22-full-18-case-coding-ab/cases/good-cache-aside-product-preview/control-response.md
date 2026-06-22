@@ -1,0 +1,103 @@
+More natural version:  
+“Please review this Java code and decide whether this Redis cache usage should be rejected or patched. If patched, provide the Java patch and the operational checks that make this design safe.”
+
+1. Recommended decision: patch, do not reject.
+
+2. Main issues to address:
+1. High: `products.findForPreview(sku)` may return `null`, causing `NullPointerException` when dereferencing `product.id()`.
+2. High: Redis or JSON errors can bring preview lookup down; failures are uncaught.
+3. Medium: no handling for cache misses on non-existent SKUs, so repeated misses create repeated DB reads.
+4. Medium: no cache invalidation on product updates, so previews can stay stale up to 5 minutes (or longer under read failures).
+5. Low: hardcoded TTL and key format in code, and no observability.
+
+3. Java patch I would recommend:
+
+```java
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.Objects;
+
+public final class ProductPreviewService {
+    private static final Logger LOG = LoggerFactory.getLogger(ProductPreviewService.class);
+
+    private static final String CACHE_PREFIX = "product-preview:";
+    private static final String MISSING_MARKER = "__missing__";
+    private static final int PREVIEW_TTL_SECONDS = 300;
+    private static final int MISSING_TTL_SECONDS = 30;
+
+    private final RedisClient redis;
+    private final ProductRepository products;
+
+    public ProductPreviewService(RedisClient redis, ProductRepository products) {
+        this.redis = Objects.requireNonNull(redis, "redis");
+        this.products = Objects.requireNonNull(products, "products");
+    }
+
+    public ProductPreview preview(String sku) {
+        if (sku == null || sku.isBlank()) {
+            throw new IllegalArgumentException("sku must not be null/blank");
+        }
+
+        String key = CACHE_PREFIX + sku;
+
+        ProductPreview cached = getFromCache(key, sku);
+        if (cached != null) {
+            return cached;
+        }
+
+        Product product = products.findForPreview(sku);
+        if (product == null) {
+            cacheMissingProduct(key);
+            return null;
+        }
+
+        ProductPreview preview = ProductPreview.from(product.id(), product.name(), product.thumbnailUrl());
+        cachePreview(key, preview);
+        return preview;
+    }
+
+    private ProductPreview getFromCache(String key, String sku) {
+        try {
+            String cached = redis.get(key);
+            if (cached == null || MISSING_MARKER.equals(cached)) {
+                return null;
+            }
+            try {
+                return ProductPreview.fromJson(cached);
+            } catch (RuntimeException e) {
+                LOG.warn("Invalid cached ProductPreview for key {}", key, e);
+                return null;
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Redis read failed for key {} (sku={}), fallback to DB", key, sku, e);
+            return null;
+        }
+    }
+
+    private void cachePreview(String key, ProductPreview preview) {
+        try {
+            redis.setex(key, PREVIEW_TTL_SECONDS, preview.toJson());
+        } catch (RuntimeException e) {
+            LOG.warn("Redis write failed for key {}", key, e);
+        }
+    }
+
+    private void cacheMissingProduct(String key) {
+        try {
+            redis.setex(key, MISSING_TTL_SECONDS, MISSING_MARKER);
+        } catch (RuntimeException e) {
+            LOG.warn("Failed to cache missing-product marker for key {}", key, e);
+        }
+    }
+}
+```
+
+4. Operational checks to protect this design:
+1. Cache hit rate, miss rate, and redis-fallback-to-DB count (should trend and alert on spikes).
+2. Redis error rate and p95/p99 latency; if error budget is exceeded, verify graceful fallback behavior.
+3. DB read QPS and query latency by preview endpoint, especially during cache outages or invalidation waves.
+4. JSON parse failure rate from cache payloads (indicates serializer/versioning drift or corruption).
+5. Negative-cache marker hit ratio (should stay reasonable; spikes can reveal scanning/fraud or bad SKUs).
+6. Cache memory + key cardinality alerts (`product-preview:*` growth) and TTL distribution.
+7. Product update/delete flow must emit cache invalidation (`DEL product-preview:{sku}`) so previews do not stay stale after mutations.
+8. Synthetic checks on a small canary set comparing preview fields with DB for staleness and schema compatibility.

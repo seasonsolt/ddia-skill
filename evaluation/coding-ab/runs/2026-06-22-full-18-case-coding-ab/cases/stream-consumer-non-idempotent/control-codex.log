@@ -1,0 +1,179 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/stream-consumer-non-idempotent/control-response.md -
+
+## stdout
+A more idiomatic version of your request is:  
+*Review this Java payment handler as a general backend task and propose a patch to make it safe when events are replayed or delivered more than once.*
+
+Use an idempotent, transactional write path so each payment event is applied at most once.
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public LoyaltyConsumer(LoyaltyRepository loyalty) {
+        this.loyalty = loyalty;
+    }
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = Math.max(event.amountCents(), 0) / 100;
+        // true => first time this event is seen, false => duplicate replay
+        loyalty.awardPointsForPaymentOnce(event.userId(), event.paymentId(), points);
+    }
+}
+```
+
+```java
+public interface LoyaltyRepository {
+    /**
+     * Applies points exactly once per payment event.
+     * @return true if points were added, false if this payment event was already processed.
+     */
+    boolean awardPointsForPaymentOnce(String userId, String paymentEventId, int points);
+}
+```
+
+```java
+// Example JDBC-style implementation
+@Transactional
+public boolean awardPointsForPaymentOnce(String userId, String paymentEventId, int points) {
+    int inserted = jdbcTemplate.update("""
+        INSERT INTO processed_payments (payment_event_id, user_id, processed_at)
+        VALUES (?, ?, NOW())
+        ON CONFLICT (payment_event_id) DO NOTHING
+        """, paymentEventId, userId);
+
+    if (inserted == 0) {
+        return false; // duplicate or replayed event
+    }
+
+    jdbcTemplate.update("""
+        INSERT INTO loyalty_balances (user_id, points)
+        VALUES (?, ?)
+        ON CONFLICT (user_id) DO UPDATE
+        SET points = loyalty_balances.points + EXCLUDED.points
+        """, userId, points);
+
+    return true;
+}
+```
+
+Required schema piece:
+
+- Add a unique constraint/index on `processed_payments(payment_event_id)` so duplicates are rejected safely under concurrent replay.
+
+Also critical: ensure `PaymentCaptured` carries a stable unique `paymentId` from the payment source; without that identifier, idempotency cannot be guaranteed correctly.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef82-b165-7252-b7b2-0209ade21b47
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Control Instructions
+
+Answer the Java coding case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill. Review the code as a general Java backend coding task and provide the patch you would normally recommend.
+
+## Scenario
+
+A loyalty service grants points when payment events arrive from a stream. After a consumer restart and replay, some users received more points than expected for the same payment.
+
+## Java Code
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = event.amountCents() / 100;
+        loyalty.addPoints(event.userId(), points);
+    }
+}
+```
+
+## Task
+
+Review the handler and propose a patch that makes payment replay and duplicate delivery safe.
+
+codex
+A more idiomatic version of your request is:  
+*Review this Java payment handler as a general backend task and propose a patch to make it safe when events are replayed or delivered more than once.*
+
+Use an idempotent, transactional write path so each payment event is applied at most once.
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public LoyaltyConsumer(LoyaltyRepository loyalty) {
+        this.loyalty = loyalty;
+    }
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = Math.max(event.amountCents(), 0) / 100;
+        // true => first time this event is seen, false => duplicate replay
+        loyalty.awardPointsForPaymentOnce(event.userId(), event.paymentId(), points);
+    }
+}
+```
+
+```java
+public interface LoyaltyRepository {
+    /**
+     * Applies points exactly once per payment event.
+     * @return true if points were added, false if this payment event was already processed.
+     */
+    boolean awardPointsForPaymentOnce(String userId, String paymentEventId, int points);
+}
+```
+
+```java
+// Example JDBC-style implementation
+@Transactional
+public boolean awardPointsForPaymentOnce(String userId, String paymentEventId, int points) {
+    int inserted = jdbcTemplate.update("""
+        INSERT INTO processed_payments (payment_event_id, user_id, processed_at)
+        VALUES (?, ?, NOW())
+        ON CONFLICT (payment_event_id) DO NOTHING
+        """, paymentEventId, userId);
+
+    if (inserted == 0) {
+        return false; // duplicate or replayed event
+    }
+
+    jdbcTemplate.update("""
+        INSERT INTO loyalty_balances (user_id, points)
+        VALUES (?, ?)
+        ON CONFLICT (user_id) DO UPDATE
+        SET points = loyalty_balances.points + EXCLUDED.points
+        """, userId, points);
+
+    return true;
+}
+```
+
+Required schema piece:
+
+- Add a unique constraint/index on `processed_payments(payment_event_id)` so duplicates are rejected safely under concurrent replay.
+
+Also critical: ensure `PaymentCaptured` carries a stable unique `paymentId` from the payment source; without that identifier, idempotency cannot be guaranteed correctly.
+tokens used
+3,556
+
+
+exit_code: 0

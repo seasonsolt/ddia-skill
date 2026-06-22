@@ -1,0 +1,385 @@
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: elasticsearch-authorization-trap
+Category: adversarial
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: elasticsearch-authorization-trap
+
+Case ID: elasticsearch-authorization-trap
+Category: adversarial
+Language: Java
+Primary DDIA topics: derived data, authorization, indexing, consistency
+
+## Scenario
+
+A document access service uses a fast permission lookup before returning documents. Operators have seen occasional incorrect access decisions shortly after permission changes, and the team asks for a Java patch before a larger rollout.
+
+## Flawed Java
+
+```java
+public final class DocumentAccessService {
+    private final SearchClient search;
+
+    public boolean canView(UUID userId, UUID documentId) {
+        SearchHit hit = search.get("document_permissions", documentId.toString());
+        return hit.allowedUserIds().contains(userId.toString());
+    }
+}
+```
+
+## Task
+
+Review the access check and propose a Java-oriented patch. Keep the answer focused on correctness during permission changes, ambiguous lookup results, and tests or metrics that would catch stale access decisions.
+
+## Expected DDIA Reasoning
+
+The answer should identify Elasticsearch as a derived index rather than the authorization source of truth. A strong patch should check durable permission data for authorization decisions, use the index only for candidate retrieval or ranking, and handle missing, stale, or ambiguous index state by denying access or rechecking against the durable store.
+
+## Strong Patch Signals
+
+- Introduces or uses a durable authorization repository as the permission authority.
+- Post-filters search results against the durable permission store before returning documents.
+- Adds index lag, stale-read, and reindexing metrics or alerts.
+- Denies by default when permission data is missing, ambiguous, or inconsistent.
+
+## Weak Patch Patterns
+
+- Refreshes the Elasticsearch index synchronously and still treats hits as permission proof.
+- Adds a cache TTL around search results without changing the authorization source.
+- Treats search hits, denormalized permission arrays, or query filters as sufficient proof of access.
+- Handles null hits as the only failure mode while ignoring stale positive permissions.
+
+## Scoring Notes
+
+- This adversarial case tests derived-data anti-pattern resistance.
+- Award high scores for separating candidate discovery from authorization enforcement.
+- Penalize answers that optimize index freshness while leaving authorization dependent on the index.
+
+
+## Response A
+
+You are asking for a DDIA-style review of this Java permission check, focusing on why permissions can be wrong after updates, how to handle ambiguous lookups, and the smallest practical patch to improve correctness.
+
+**Assumptions and workload shape**
+1. Reads are frequent and latency-sensitive, while permission changes are less frequent.
+2. `document_permissions` is queried for fast reads and is either a search index, cache, or replica-like derived store.
+3. Read-after-write correctness matters: after a grant/revoke, decisions should reflect current permissions as soon as practical for the service.
+4. A strict policy is expected: an access decision should never be positively granted on a stale or ambiguous lookup.
+
+**Recommendation**
+1. Treat the search read as a cache, not the source of truth.
+2. Add an authoritative path (`PermissionRepository`) for:
+   - missing index rows,
+   - ambiguous results,
+   - malformed index rows,
+   - index query/parse errors,
+   - optional stale-version detection.
+3. Keep index checks narrow and non-authoritative unless confidence is high.
+
+**Minimal Java-oriented patch (smallest correctness-improving change)**
+
+```java
+public final class DocumentAccessService {
+    private final SearchClient search;
+    private final PermissionRepository permissionRepository; // authoritative store
+
+    public boolean canView(UUID userId, UUID documentId) {
+        final SearchQueryResult result;
+        try {
+            // Replace single-key get with a bounded query so we can detect ambiguity.
+            result = search.query("document_permissions")
+                           .mustEq("document_id", documentId.toString())
+                           .limit(2)
+                           .execute();
+        } catch (RuntimeException e) {
+            // Failure safety: do not trust index on read error
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        if (result == null || result.totalHits() == 0) {
+            // Missing entry in derived store: fallback to truth
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        if (result.totalHits() != 1) {
+            // Ambiguous lookup (duplicate/misaligned docs): deny fast path and verify source of truth
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        DocumentPermissionIndexRecord record = result.first();
+
+        // Optional freshness guard if you store a monotonic version or updatedAt in both systems:
+        // if (record.version() < permissionRepository.currentVersion(documentId)) fallback...
+        // This closes the read-after-write gap after permission changes.
+
+        return record.allowedUserIds() != null
+            && record.allowedUserIds().contains(userId.toString());
+    }
+}
+```
+
+If your existing `SearchClient` does not support query+count, keep `get(...)` and still add:
+- null-checks,
+- catch-and-fallback,
+- fallback on malformed or empty payload,
+but note that ambiguity detection will be weaker without query/count support.
+
+**Transaction boundaries**
+1. The write path must be explicit: persist permission changes first in the authoritative DB.
+2. Replicate to index asynchronously via an outbox/event stream or CDC worker.
+3. Do not assume atomicity between DB and index unless you implement distributed transactions (usually unnecessary if read fallback exists).
+4. This patch shifts correctness dependence to the DB read path only when needed.
+
+**Source of truth**
+1. Define DB as definitive for both grants and revokes.
+2. Search index remains an optimization path (speed), not an authority.
+3. Any positive allow decision should only be made from a single, validated snapshot or the source-of-truth fallback.
+
+**Consistency and correctness implications**
+1. Immediate consistency between DB and index is not guaranteed without stronger coupling; this patch avoids relying on that for critical decisions.
+2. The patch eliminates one major class of false permits due to ambiguous/missing/stale index state.
+3. Remaining window: if index returns one matching row while stale and `version`/timestamp guard is not implemented, false decisions remain possible. Add version metadata to close this.
+4. Do not overstate guarantees: this is correctness-improving, not linearizable across stores.
+
+**Idempotency**
+1. `canView` is now idempotent and side-effect free.
+2. Repeated calls under the same underlying state should return the same result.
+3. For write-side changes, make index update events idempotent (event id + upsert-by-document-id) to reduce duplicate/conflicting index states that create ambiguity.
+
+**Failure modes**
+1. Index replication lag or reorder causes stale allow/deny on index-only checks (fixed by fallback).
+2. Duplicate index documents for same `documentId` cause ambiguous matches (detected, fallback to DB).
+3. Empty / corrupted snapshot causes false negatives/false positives; fallback covers both.
+4. Search outage causes temporary fallback load on DB and possible latency increase.
+
+**Operational visibility**
+1. Add counters:
+   - `doc_access_index_miss`
+   - `doc_access_index_ambiguous`
+   - `doc_access_index_error`
+   - `doc_access_fallback_to_db`
+2. Track p99/p50 latency for:
+   - normal index path,
+   - fallback path.
+3. Alert on surge in fallback/ambiguity rate after deploy.
+4. Add sampled parity check job: compare `canView` from index path vs DB every few minutes and alert on drift.
+
+**Tests/experiments**
+1. Unit tests:
+   - search returns null -> DB decision path used.
+   - search throws -> DB decision path used.
+   - 0 hits, >1 hit, malformed payload -> DB fallback.
+   - success hit with allowed and denied cases.
+2. Integration test:
+   - grant/revoke in DB then read immediately before/after index refresh.
+   - verify no false allow when revoked if fallback is triggered by stale detection/version.
+3. Chaos/operational tests:
+   - partial index lag,
+   - duplicate docs in index,
+   - index node restart.
+4. Production canary:
+   - dual-write-read audit sampling to detect divergence between index-derived and DB-derived decisions by document/user pair.
+
+## Response B
+
+You asked for a Java review-and-patch of the document access check, focused on correctness when permissions change, handling ambiguous permission lookups, and adding tests/metrics to catch stale access decisions.
+
+### Findings (by severity)
+
+1. **High – stale permission reads are possible**  
+   The direct `search.get(...)` lookup can return an out-of-date replica view right after permission writes, causing transient incorrect denies/grants.
+
+2. **High – ambiguous permission results are not handled**  
+   Current code assumes a single hit and a non-null set. If the index contains duplicate permission docs for a document, stale or corrupted data can slip through and return an arbitrary decision.
+
+3. **Medium – potential null-safety regressions**  
+   `hit` or `hit.allowedUserIds()` may be null, leading to runtime exceptions and false positives/negatives.
+
+4. **Medium – weak observability**  
+   No metrics exist for misses, ambiguities, stale-read recovery, or exceptions, so this class cannot prove correctness across permission churn.
+
+### Recommended Java patch
+
+```java
+import java.util.Set;
+import java.util.UUID;
+
+public final class DocumentAccessService {
+    private static final String PERMISSIONS_INDEX = "document_permissions";
+
+    private final SearchClient search;
+    private final AccessMetrics metrics;
+
+    public boolean canView(UUID userId, UUID documentId) {
+        if (userId == null || documentId == null) {
+            metrics.invalidRequest();
+            return false;
+        }
+
+        final String uid = userId.toString();
+        final String docId = documentId.toString();
+
+        PermissionLookup first = lookupWithLimit(docId, ReadMode.EVENTUAL);
+        if (first.hits.isEmpty()) {
+            metrics.permissionLookupMiss();
+            return false;
+        }
+
+        if (first.hits.size() != 1) {
+            metrics.ambiguousPermissionLookup();
+            return false; // fail-closed when data integrity is uncertain
+        }
+
+        if (isAllowed(first.hits.get(0), uid)) {
+            metrics.permissionAllowed();
+            return true;
+        }
+
+        // Retry once against authoritative/read-fresh path to guard near-term stale replica reads.
+        PermissionLookup fresh = lookupWithLimit(docId, ReadMode.PRIMARY_FRESH);
+        if (fresh.hits.size() != 1) {
+            metrics.staleRetryFailure();
+            return false;
+        }
+
+        boolean allowed = isAllowed(fresh.hits.get(0), uid);
+        if (allowed) {
+            metrics.staleRetryRecovered();
+        } else {
+            metrics.permissionDenied();
+        }
+        return allowed;
+    }
+
+    private PermissionLookup lookupWithLimit(String documentId, ReadMode readMode) {
+        // Replace with your SearchClient query API shape.
+        // The key part is: read with deterministic cardinality limit=2 and configurable
+        // eventual-vs-primary/refresh semantics.
+        // Example semantics:
+        // - EVENTUAL: current fast path
+        // - PRIMARY_FRESH: force read from primary or refresh point (read-after-write safety)
+        return search.lookupPermissionIndex(PERMISSIONS_INDEX, documentId, 2, readMode);
+    }
+
+    private boolean isAllowed(SearchHit hit, String userIdAsString) {
+        if (hit == null) {
+            return false;
+        }
+        Set<String> allowedUserIds = hit.allowedUserIds();
+        return allowedUserIds != null && allowedUserIds.contains(userIdAsString);
+    }
+
+    // Read mode to be implemented by your SearchClient layer
+    enum ReadMode {
+        EVENTUAL,
+        PRIMARY_FRESH
+    }
+
+    interface AccessMetrics {
+        void invalidRequest();
+
+        void permissionLookupMiss();
+
+        void ambiguousPermissionLookup();
+
+        void permissionAllowed();
+
+        void permissionDenied();
+
+        void staleRetryRecovered();
+
+        void staleRetryFailure();
+    }
+
+    static final class PermissionLookup {
+        private final java.util.List<SearchHit> hits;
+
+        PermissionLookup(java.util.List<SearchHit> hits) {
+            this.hits = hits;
+        }
+
+        java.util.List<SearchHit> hits() {
+            return hits;
+        }
+    }
+}
+```
+
+If your `SearchClient` currently has only `get(index, id)`, add a small repository layer that exposes:
+- `lookupPermissionIndex(index, documentId, limit, readMode)`
+- `SearchHit` + cardinality checks
+- `primary/refresh` read path
+
+That keeps the service testable and keeps the inconsistency protections localized.
+
+### Tests to add (high value for this issue)
+
+1. `nullUserOrDocumentIdReturnsFalseAndIncrementsInvalidRequest`
+2. `missingPermissionDocumentReturnsFalseAndIncrementsMiss`
+3. `multiplePermissionRowsForSameDocumentReturnsFalseAndIncrementsAmbiguous`
+4. `permissionAllowsUserAfterRetryWhenFirstReadWasStale`
+   - Fake client returns stale replica hit without user first, then primary-fresh hit with user present.
+   - Assert final `true` and `staleRetryRecovered` increments.
+5. `permissionDeniesUserAfterRetryWhenBothReadsDeny`
+   - Assert `staleRetryFailure`/`permissionDenied` counters.
+6. `throwsExceptionInSearchClientReturnsFalseAndIncrementsError` (if you add error metric)
+
+### Metrics that specifically catch stale decisions
+
+1. `doc_access_lookup_miss_total`
+2. `doc_access_lookup_ambiguous_total`
+3. `doc_access_lookup_stale_retry_recovered_total`
+4. `doc_access_lookup_stale_retry_failed_total`
+5. `doc_access_allowed_total`
+6. `doc_access_denied_total`
+7. Optional: histogram for lookup latency split by read mode (`eventual` vs `primary_fresh`)
+
+These changes make transient permission-change windows explicit, fail safely on index ambiguity, and give you evidence when stale reads are being exercised.

@@ -1,0 +1,20 @@
+{
+  "case_id": "checkout-cache-as-truth",
+  "category": "bad",
+  "mapping": {
+    "A": "treatment",
+    "B": "control"
+  },
+  "control_total": 5,
+  "treatment_total": 10,
+  "denominator": 12,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 5,
+  "normalized_lift": 0.4166666666666667,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Patch improves behavior for caught DB failures and adds retry guards, but remains Redis-led for both stock and idempotency with no durable invariant in DB for authoritative stock. It does not address crash ambiguity after successful DB insert or before success marker persistence and can still produce duplicate/conflicted outcomes under failures. Tests are present but do not validate the key ambiguity/recovery boundary.",
+  "treatment_rationale": "Good practical direction: identifies split-brain failure, adds Redis reservation marker with guarded release, adds DB-level idempotency key uniqueness, and proposes meaningful crash/retry/concurrency tests. It is still partial on the source-of-truth invariant because it does not show the durable Postgres inventory mutation path in the critical section, so no hard guarantee in the crash window until reconciliation/reclaimer.",
+  "judge_rationale": "Response A is materially stronger: it introduces a reservation+idempotency workflow and more complete failure handling assumptions/tests, whereas Response B mainly adds best-effort rollback in Redis and falls short on source-of-truth correctness and retry safety under crash ambiguity."
+}

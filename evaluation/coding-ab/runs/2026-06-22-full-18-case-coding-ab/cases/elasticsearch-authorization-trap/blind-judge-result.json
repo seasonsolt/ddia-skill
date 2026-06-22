@@ -1,0 +1,36 @@
+{
+  "case_id": "elasticsearch-authorization-trap",
+  "category": "adversarial",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 1,
+      "source_of_truth_boundary": 1,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": 1
+    },
+    "total": 11,
+    "denominator": 14,
+    "pass": false,
+    "rationale": "Stronger recognition of derived-index trap: introduces a PermissionRepository authoritative path and handles empty/ambiguous/error cases via fallback, plus concrete metrics/tests. Still falls short of full correctness because the fast path can still grant directly from index without mandatory freshness/version validation, so index-derived allow remains possible after permission churn."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 1,
+      "source_of_truth_boundary": 0,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 1,
+      "anti_pattern_resistance": 0
+    },
+    "total": 7,
+    "denominator": 14,
+    "pass": false,
+    "rationale": "Keeps index as the authorization source and uses eventual+primary-fresh retry instead of a durable fallback, which is an anti-pattern for this case. It improves stale-window behavior and observability partially, but does not separate enforcement from derived-index candidate retrieval and can still misauthorize. Missing hardening for search exceptions and no source-of-truth check further weakens correctness."
+  },
+  "winner": "A",
+  "rationale": "A is materially better because it explicitly shifts authority to a durable permission repository on ambiguity/miss/error and treats the index as non-authoritative in those cases; B remains index-authoritative despite retries and therefore violates the central boundary requirement."
+}

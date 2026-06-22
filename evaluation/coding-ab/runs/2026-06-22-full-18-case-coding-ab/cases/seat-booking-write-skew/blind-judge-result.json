@@ -1,0 +1,36 @@
+{
+  "case_id": "seat-booking-write-skew",
+  "category": "bad",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 1,
+      "source_of_truth_boundary": 1,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 0,
+      "operational_verification": 0,
+      "java_patch_quality": 1,
+      "anti_pattern_resistance": null
+    },
+    "total": 4,
+    "denominator": 12,
+    "pass": false,
+    "rationale": "Response A improves concurrency over naive code by serializing on a locked event row and adds lock/deadlock retry, but the check-then-insert pattern remains application-level and is fragile under transactional-retry behavior and client-level retries. It does not make the invariant durable without an atomic DB check/update and lacks idempotency protection."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 12,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Response B enforces capacity through a single conditional atomic DB update on the event row and ties retries/duplicates to a request-idempotency key with a unique constraint. It also covers failure cases and provides concrete verification ideas, which maps directly to DDIA concurrency-invariant guidance."
+  },
+  "winner": "B",
+  "rationale": "B is superior: it encodes the capacity invariant in storage with atomic state transition, handles retries safely via idempotency, and includes stronger operational checks/tests. A remains partial and can still fail correctness under retry/idempotency scenarios."
+}

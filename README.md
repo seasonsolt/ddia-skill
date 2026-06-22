@@ -130,6 +130,11 @@ It is a useful negative result: the treatment beat the control by one point, but
 both responses failed because neither fully moved the inventory invariant out of
 Redis and into a durable transactional boundary.
 
+The first complete 18-case coding A/B run is archived in
+[`evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab`](evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab).
+In that run, treatment scored 202/226 versus control at 151/226, passed 15/18
+cases versus control at 4/18, and won 15 cases with 2 control wins and 1 tie.
+
 ## Benchmark Suite
 
 The repository also includes a repeatable benchmark for future skill changes.

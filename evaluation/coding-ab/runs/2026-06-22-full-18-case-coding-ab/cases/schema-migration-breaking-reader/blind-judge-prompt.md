@@ -1,0 +1,247 @@
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: schema-migration-breaking-reader
+Category: bad
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: schema-migration-breaking-reader
+
+Case ID: schema-migration-breaking-reader
+Category: bad
+Language: Java
+Primary DDIA topics: schema evolution, compatibility, event streams, deployment
+
+## Scenario
+
+An order service publishes JSON events that several downstream services consume. A newer producer was deployed first, and a legacy credit-reservation consumer started failing on events from the new topic.
+
+## Flawed Java
+
+```java
+public final class OrderEventPublisher {
+    private final KafkaTemplate<String, String> kafka;
+
+    public void publish(Order order) {
+        String payload = """
+            {"orderId":"%s","totalCents":%d,"currency":"%s"}
+            """.formatted(order.id(), order.totalCents(), order.currency());
+        kafka.send("orders.v2", order.id().toString(), payload);
+    }
+}
+
+public final class LegacyOrderConsumer {
+    public void handle(JsonNode event) {
+        long amount = event.get("amountCents").asLong();
+        reserveCredit(amount);
+    }
+}
+```
+
+## Task
+
+Review the producer and consumer change and propose a patch that lets the migration roll out without breaking existing readers.
+
+## Expected DDIA Reasoning
+
+The answer should identify that the producer changed the event schema before all readers were compatible. A good patch should use an additive or versioned migration path, compatibility checks, dual-publish or dual-read behavior during rollout, and consumer contract tests so old and new readers have proof of compatibility before the old field or topic is removed.
+
+## Strong Patch Signals
+
+- Keeps `amountCents` during the migration or publishes a compatible event shape until readers move.
+- Adds a schema registry or compatibility gate that rejects breaking changes.
+- Backfills, transforms, or dual-reads events safely during the rollout window.
+
+## Weak Patch Patterns
+
+- Says JSON is flexible enough and ignores missing-field behavior.
+- Catches null and defaults the amount to zero, silently changing money movement.
+- Assumes all consumers can be upgraded manually without rollout proof or contract tests.
+
+## Scoring Notes
+
+- Award high scores for explaining forward and backward compatibility across independently deployed services.
+- Penalize answers that treat producer deployment order as the only required fix.
+
+
+## Response A
+
+You want a backward-compatible migration: keep publishing a legacy field (`amountCents`) while introducing `totalCents`, and make the legacy consumer accept both field names so reads don’t break.
+
+```java
+public final class OrderEventPublisher {
+    private static final String ORDER_TOPIC = "orders.v2";
+    private final KafkaTemplate<String, String> kafka;
+
+    public void publish(Order order) {
+        long amountCents = order.totalCents();
+
+        String payload = """
+            {"orderId":"%s","totalCents":%d,"amountCents":%d,"currency":"%s"}
+            """.formatted(order.id(), amountCents, amountCents, order.currency());
+
+        kafka.send(ORDER_TOPIC, order.id().toString(), payload);
+    }
+}
+```
+
+```java
+public final class LegacyOrderConsumer {
+    public void handle(JsonNode event) {
+        JsonNode amountNode = event.path("amountCents");
+        if (!amountNode.isNumber()) {
+            amountNode = event.path("totalCents");
+        }
+
+        if (!amountNode.isNumber()) {
+            throw new IllegalArgumentException("Order event missing required amount field: amountCents or totalCents");
+        }
+
+        long amount = amountNode.asLong();
+        reserveCredit(amount);
+    }
+}
+```
+
+This lets older consumers continue to work during rollout; once all downstream services move to `totalCents`, you can remove `amountCents` from the producer later.
+
+## Response B
+
+A more natural version of your request:  
+“Please review this producer/consumer change and suggest the smallest safe patch for a rollout that won’t break legacy readers, using practical Java guidance with distributed-data correctness concerns.”
+
+### Assumptions and workload shape
+- Multiple consumers read from `orders.v2` during a rolling deployment.
+- Order events are write-heavy writes from the order service and read/ acted upon by at least one credit system.
+- Kafka gives ordered delivery only within a partition and at-least-once processing behavior unless explicitly bounded; duplicate deliveries are possible.
+
+### Source of truth and transaction boundaries
+- The authoritative state for order amounts is the order service datastore (not the event payload).
+- The Kafka message is derived data and must be backward-compatible during migration.
+- The publish path should ideally be in an atomic boundary with the state change that created the event (same DB txn + outbox or equivalent), otherwise you can miss/duplicate downstream credit effects.
+
+### Bug (root cause) and minimal migration-safe fix
+The breakage is caused by an incompatible field rename:
+- Producer emits `totalCents`
+- Legacy consumer expects `amountCents`
+
+Also, `event.get("amountCents").asLong()` can default to a bad value when the field is missing, causing silent under-reservation.
+
+### Recommended minimal patch
+Keep migration additive and tolerant:
+1) Producer: emit both names during rollout.
+2) Consumer: read `amountCents` first, fallback to `totalCents`, and fail fast if neither is present/valid.
+
+```java
+public final class OrderEventPublisher {
+    private final KafkaTemplate<String, String> kafka;
+
+    public void publish(Order order) {
+        long amount = order.totalCents();
+        String payload = """
+            {"orderId":"%s","totalCents":%d,"amountCents":%d,"currency":"%s"}
+            """.formatted(order.id(), amount, amount, order.currency());
+        kafka.send("orders.v2", order.id().toString(), payload);
+    }
+}
+```
+
+```java
+public final class LegacyOrderConsumer {
+    public void handle(JsonNode event) {
+        String orderId = event.path("orderId").asText(null);
+        long amount = extractAmountCents(event);
+        // reserveCredit should be idempotent for orderId/amount or eventId
+        reserveCredit(orderId, amount);
+    }
+
+    private static long extractAmountCents(JsonNode event) {
+        JsonNode n = event.get("amountCents");
+        if (n == null || n.isNull() || n.isMissingNode()) {
+            n = event.get("totalCents");
+        }
+        if (n == null || n.isNull() || n.isMissingNode() || !n.canConvertToLong()) {
+            throw new IllegalArgumentException("Missing or invalid amount field for orderId="
+                    + event.path("orderId").asText("unknown"));
+        }
+        long amount = n.asLong();
+        if (amount < 0) {
+            throw new IllegalArgumentException("Negative amount for orderId=" + event.path("orderId").asText("unknown"));
+        }
+        return amount;
+    }
+}
+```
+
+### Consistency and correctness implications
+- This is a **distributed data compatibility** issue, not just naming: readers are independently deployed and not transactionally synchronized.
+- The patch preserves backward compatibility while introducing the new schema, avoiding hard breakage.
+- It still does not guarantee exactly-once credit side effects—Kafka and retries can duplicate messages.
+
+### Idempotency and transaction boundaries
+- Add idempotency at credit reservation level: deduplicate by `(orderId, eventOffset, eventPartition, eventTimestamp)` or an `eventId`.
+- Store processed-event markers or use DB constraints to make `reserveCredit` idempotent.
+- For stronger correctness across producer crashes, use an outbox pattern if order write + event publish must stay aligned.
+
+### Failure modes
+- Missing field now fails loudly instead of reserving zero.
+- Duplicate events can over-reserve unless idempotent.
+- Consumers seeing only `totalCents` continue to work during rollout.
+- If send failures happen, add producer send callbacks/retries and DLQ handling on consumer exceptions.
+
+### Operational visibility
+- Emit metrics: publish failures by topic, consumer parse-failure rate, fallback-to-legacy-field rate, credit reservation duplicate-suppression hits, DLQ size, and retry storm rate.
+- Alert when fallback-rate spikes (indicates straggling old/new producer mix not expected).
+
+### Tests to validate
+- Unit test: `amountCents` present.
+- Unit test: `totalCents` only (legacy path).
+- Unit test: missing/invalid fields => explicit failure.
+- Contract test for JSON field presence during canary rollout.
+- Integration test: duplicate event replay does not double-reserve (idempotency check).

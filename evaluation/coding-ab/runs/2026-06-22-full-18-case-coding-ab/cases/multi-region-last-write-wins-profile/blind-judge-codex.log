@@ -1,0 +1,393 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/multi-region-last-write-wins-profile/blind-judge-raw.json --output-schema /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/judge-output-schema.json -
+
+## stdout
+{"case_id":"multi-region-last-write-wins-profile","category":"adversarial","response_a":{"scores":{"correctness_invariant":1,"source_of_truth_boundary":1,"failure_mode_handling":1,"idempotency_retry_safety":1,"operational_verification":1,"java_patch_quality":1,"anti_pattern_resistance":0},"rationale":"Adds deterministic tie-breaking over timestamps but keeps blanket whole-object last-write-wins semantics. Still relies on mutable wall-clock ordering as primary truth and can silently drop concurrent independent edits. It introduces no causal metadata workflow, no explicit conflict retention, and no user-facing conflict handling. Tests exist but do not validate merge-safe behavior for field-level conflicts; one comparator helper in tests appears inconsistent (uses nonexistent accessor methods on ProfileMeta), which also weakens patch quality. Fails adversarial anti-pattern bar."},"response_b":{"scores":{"correctness_invariant":1,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":1,"operational_verification":1,"java_patch_quality":1,"anti_pattern_resistance":1},"rationale":"Moves decision key off raw timestamps, explicitly acknowledges wall-clock is unreliable, and proposes persisted revision/tiebreak metadata with transactional write ordering and replay handling. This is materially stronger on operational semantics and failure handling than A, and aligns better with source-of-truth flow. However, resolver still enforces single-winner profile-wide LWW and does not preserve per-field merges or explicit unresolved-conflict records, so product correctness for concurrent independent edits remains incomplete. Operational verification is described but not implemented as executable tests, and idempotency support is partly procedural rather than embedded in patch code."},"winner":"B","rationale":"Response B is superior overall: it better handles cross-region concurrency risks and operational failure modes with durable metadata and explicit caveats, while Response A remains mostly timestamp-based whole-object LWW. Neither reaches full adversarial pass because anti-pattern resistance is below 2 and neither preserves mergeable field-level correctness or explicit conflict states."}
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7d-ddb1-78a1-ba5a-f7a40670cb1b
+--------
+user
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: multi-region-last-write-wins-profile
+Category: adversarial
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: multi-region-last-write-wins-profile
+
+Case ID: multi-region-last-write-wins-profile
+Category: adversarial
+Language: Java
+Primary DDIA topics: replication, conflict resolution, distributed consistency, user data correctness
+
+## Scenario
+
+A profile service accepts updates in multiple regions and resolves conflicts when asynchronous replication delivers another region's copy. The team asks for a small Java patch because a few users have reported missing profile edits after travel or failover.
+
+## Flawed Java
+
+```java
+public final class ProfileConflictResolver {
+    public Profile resolve(Profile local, Profile remote) {
+        return local.updatedAt().isAfter(remote.updatedAt()) ? local : remote;
+    }
+}
+```
+
+## Task
+
+Review the resolver and propose a safer Java-oriented conflict-resolution patch. Keep the answer focused on product-visible behavior for conflicts and tests for concurrent profile edits across regions.
+
+## Expected DDIA Reasoning
+
+The answer should reject blanket last-write-wins for user profile data because it can lose independent updates across regions. A strong patch should merge per field where that merge is valid, attach versions, vector clocks, or equivalent causal metadata, preserve unresolved conflicts as explicit records, and define how the product surfaces or resolves conflicts instead of silently choosing one whole object.
+
+## Strong Patch Signals
+
+- Rejects blanket LWW as the conflict policy for user data.
+- Preserves both conflicting values when the system cannot merge them safely.
+- Adds a conflict queue, review state, or CRDT-style merge only for fields where the merge semantics are valid.
+- Uses versions, vector clocks, or causal metadata to distinguish concurrent writes from superseding writes.
+
+## Weak Patch Patterns
+
+- Trusts wall-clock timestamps as proof of the winning update.
+- Increases NTP precision while keeping the same whole-record overwrite policy.
+- Silently overwrites one region's value without recording the conflict.
+- Adds retries or region preference rules without addressing independent concurrent edits.
+
+## Scoring Notes
+
+- This adversarial case requires anti-pattern resistance score 2 to pass.
+- Award high scores for patches that distinguish field-level mergeable data from non-mergeable conflicts.
+- Penalize answers that make LWW appear safer through clock tuning or tie-breakers.
+
+
+## Response A
+
+A more natural version: You want a safer, deterministic Java conflict-resolution patch for cross-region profile replication, with tests focused on visible behavior when concurrent edits happen at the same time.
+
+```java
+package your.package;
+
+import java.time.Instant;
+import java.util.Comparator;
+import java.util.Objects;
+
+public final class ProfileConflictResolver {
+    private final Comparator<Profile> conflictTieBreaker;
+
+    public ProfileConflictResolver() {
+        // Deterministic fallback; replace this comparator with production metadata
+        // (region / replica id + revision / version) where available.
+        this(Comparator.comparing(ProfileConflictResolver::defaultConflictKey));
+    }
+
+    public ProfileConflictResolver(Comparator<Profile> conflictTieBreaker) {
+        this.conflictTieBreaker = Objects.requireNonNull(conflictTieBreaker, "conflictTieBreaker");
+    }
+
+    public Profile resolve(Profile local, Profile remote) {
+        if (local == null) {
+            return remote;
+        }
+        if (remote == null) {
+            return local;
+        }
+
+        int updatedAtCmp = compareUpdatedAt(local.updatedAt(), remote.updatedAt());
+        if (updatedAtCmp > 0) {
+            return local;
+        }
+        if (updatedAtCmp < 0) {
+            return remote;
+        }
+
+        int tieCmp = conflictTieBreaker.compare(local, remote);
+        if (tieCmp > 0) {
+            return local;
+        }
+        if (tieCmp < 0) {
+            return remote;
+        }
+
+        // If even tie-breaker is identical, keep one side deterministically.
+        // Important for idempotency on retries and fan-in merge behavior.
+        return local;
+    }
+
+    private static int compareUpdatedAt(Instant localUpdatedAt, Instant remoteUpdatedAt) {
+        if (localUpdatedAt == null && remoteUpdatedAt == null) return 0;
+        if (localUpdatedAt == null) return -1;
+        if (remoteUpdatedAt == null) return 1;
+        return localUpdatedAt.compareTo(remoteUpdatedAt);
+    }
+
+    private static String defaultConflictKey(Profile profile) {
+        // Stable object-level key fallback.
+        // Replace with real durable fields in Profile (e.g. replicaId/version).
+        return String.valueOf(profile);
+    }
+}
+```
+
+```java
+package your.package;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.time.Instant;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Comparator;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import org.junit.jupiter.api.Test;
+
+class ProfileConflictResolverTest {
+
+    private static final class ProfileMeta {
+        final String region;
+        final long version;
+        ProfileMeta(String region, long version) { this.region = region; this.version = version; }
+    }
+
+    private Profile profile(Instant updatedAt, String key) {
+        Profile p = mock(Profile.class);
+        when(p.updatedAt()).thenReturn(updatedAt);
+        when(p.toString()).thenReturn(key); // used only by default comparator in tests
+        return p;
+    }
+
+    @Test
+    void resolvesByUpdatedAt() {
+        Instant t1 = Instant.parse("2026-06-20T10:00:00Z");
+        Instant t2 = Instant.parse("2026-06-20T10:01:00Z");
+
+        Profile older = profile(t1, "older");
+        Profile newer = profile(t2, "newer");
+
+        ProfileConflictResolver resolver = new ProfileConflictResolver();
+        assertSame(newer, resolver.resolve(older, newer));
+        assertSame(newer, resolver.resolve(newer, older));
+    }
+
+    @Test
+    void tieBreaksDeterministicallyForConcurrentRegionalEdits() {
+        Instant same = Instant.parse("2026-06-20T10:00:00Z");
+        Profile us = profile(same, "us-east-1|v2");
+        Profile eu = profile(same, "eu-west-1|v1");
+
+        Map<Profile, ProfileMeta> meta = new IdentityHashMap<>();
+        meta.put(us, new ProfileMeta("us-east-1", 2));
+        meta.put(eu, new ProfileMeta("eu-west-1", 1));
+
+        Comparator<Profile> tieBreaker = Comparator
+            .comparing((Profile p) -> meta.get(p).region)
+            .thenComparingLong(p -> meta.get(p).version);
+
+        ProfileConflictResolver resolver = new ProfileConflictResolver(tieBreaker);
+
+        assertSame(us, resolver.resolve(us, eu));
+        assertSame(us, resolver.resolve(eu, us));
+    }
+
+    @Test
+    void handlesNullProfilesAndNullTimestamps() {
+        Instant t = Instant.parse("2026-06-20T10:00:00Z");
+        Profile withTs = profile(t, "withTs");
+        Profile withoutTs = profile(null, "withoutTs");
+
+        ProfileConflictResolver resolver = new ProfileConflictResolver();
+
+        assertSame(withTs, resolver.resolve(withoutTs, withTs));
+        assertSame(withTs, resolver.resolve(withTs, withoutTs));
+        assertSame(withTs, resolver.resolve(null, withTs));
+        assertSame(withTs, resolver.resolve(withTs, null));
+    }
+
+    @Test
+    void concurrentResolutionIsIdempotent() throws Exception {
+        Instant same = Instant.parse("2026-06-20T10:00:00Z");
+        Profile a = profile(same, "a");
+        Profile b = profile(same, "b");
+
+        Map<Profile, ProfileMeta> meta = new IdentityHashMap<>();
+        meta.put(a, new ProfileMeta("eu", 1));
+        meta.put(b, new ProfileMeta("us", 1));
+
+        ProfileConflictResolver resolver = new ProfileConflictResolver(
+            Comparator.comparing((Profile p) -> meta.get(p).region())
+                      .thenComparing(p -> meta.get(p).version)
+        );
+
+        var pool = Executors.newFixedThreadPool(8);
+        Callable<Profile> callAB = () -> resolver.resolve(a, b);
+        Callable<Profile> callBA = () -> resolver.resolve(b, a);
+
+        Set<Profile> winners = IntStream.range(0, 200)
+            .mapToObj(i -> i % 2 == 0 ? callAB : callBA)
+            .map(task -> {
+                Future<Profile> f = pool.submit(task);
+                return f.get();
+            })
+            .collect(Collectors.toSet());
+
+        pool.shutdownNow();
+
+        assertEquals(1, winners.size(), "Resolver must return one stable winner for concurrent tie");
+    }
+}
+```
+
+If you want, I can give a second patch that uses real durable fields directly (for example `updatedByRegion`, `version`, or `sequence`) instead of the fallback `toString` key.
+
+## Response B
+
+You’re asking for a Java-focused review of the conflict resolver with a minimal, safer patch for cross-region profile updates, including assumptions, correctness, transaction/idempotency concerns, failure handling, observability, and tests.
+
+### Assumptions and workload shape
+- Multi-region profile updates replicate asynchronously.
+- Same user profile can be updated in different regions close in time.
+- Replication/order is not guaranteed; messages can arrive late or duplicated.
+- Product requirement: avoid silently dropping valid user edits (best effort to keep “last visible change” deterministic and explainable).
+
+### What is wrong with the current resolver
+- It uses only `updatedAt()` as ordering. Wall-clock timestamps are not a safe total order across regions.
+- On equal timestamps, `remote` always wins, so tie behavior is arbitrary and can overwrite one user edit unpredictably.
+- No explicit idempotency semantics for duplicate/replayed events.
+- No tie-break metadata means conflicts become nondeterministic under skew, failover, or clock drift.
+
+### Smallest practical patch
+Use a deterministic ordering that includes a logical version (or vector/Lamport-like clock), then timestamp, then a fixed tie-breaker (writer/region/request id). That keeps conflict resolution deterministic and replay-safe.
+
+```java
+public final class ProfileConflictResolver {
+  private static final Comparator<Profile> ORDER = Comparator
+      .comparingLong(Profile::revision)              // 1) logical version (best source of truth)
+      .thenComparing(Profile::updatedAt)             // 2) wall clock only as tie-break input
+      .thenComparing(Profile::originRegion)           // 3) deterministic tie-breaker
+      .thenComparing(Profile::writerId)               // 4) secondary deterministic tie-breaker
+      .thenComparing(Profile::updateId);              // 5) idempotency/debug support
+
+  public Profile resolve(Profile local, Profile remote) {
+    if (local == null) return remote;
+    if (remote == null) return local;
+
+    // higher wins
+    int cmp = ORDER.compare(local, remote);
+    return cmp >= 0 ? local : remote; // stable on equal payloads
+  }
+}
+```
+
+- `revision` should be generated at write-time from the source region’s replica log and included in replicated data.
+- If your model cannot add `revision`/`writerId`/`updateId` now, add them first; without them, you cannot fully solve cross-region concurrency safely with this resolver alone.
+
+### Consistency and correctness implications
+- With `revision` this becomes a deterministic “last-writer-wins by logical order” rule.
+- This is still LWW behavior: concurrent updates to different fields can still lose data (not full merge). That is a product-level guarantee trade-off; you should declare it explicitly.
+- Best you can guarantee without CRDT/field merge is single-winner per profile version, not automatic merge of concurrent edits.
+
+### Transaction boundaries and idempotency
+- Apply resolution inside the same transaction that writes the final profile row.
+- Persist `revision` atomically with profile updates and enforce monotonic progression with optimistic concurrency (`WHERE revision = expected` or version column).
+- Use `updateId` as idempotency key in replication consumers (ignore already-applied events) and dedupe metrics.
+
+### Failure modes to expect
+- Clock skew: reduced to tie-break role only, no longer correctness-critical.
+- Replay/out-of-order delivery: resolved by `revision` and/or idempotent `updateId`.
+- Region failover with lag: older version arriving later is deterministically discarded if revision is higher for fresh write.
+- Concurrent same-version writes: deterministic tie-break but still one-write-loss if conflict semantics are not merged.
+
+### Operational visibility (what to monitor)
+- `profile.conflict.total`
+- `profile.conflict.tiebreaker.count` (revision equal, fallback used)
+- `profile.revision.regression.count` (lower revision attempted to apply)
+- `profile.replication.replay.count`
+- clock-skew distribution between regions at write time (if available)
+- conflict-resolution lag and rollback rate after failover drills
+
+### Tests for concurrent cross-region edits
+- Higher revision wins over lower revision.
+- Same revision + newer `updatedAt` wins.
+- Same revision + same timestamp resolves deterministically by `originRegion`/`writerId`.
+- Duplicate `updateId` does not change state (idempotent apply).
+- Out-of-order delivery: newer version arrives after older and replaces it; older later is ignored.
+- Two concurrent updates with equal revision/timestamp from two regions result in one stable winner and observable conflict metric.
+- Fuzz test with randomized clock skew and random reorder/replay to assert eventual convergence across replicas.
+
+If you want, I can draft the exact `Profile` field additions and migration plan (SQL + backward-compatible resolver evolution) in the smallest possible diff for your service stack.
+
+codex
+{"case_id":"multi-region-last-write-wins-profile","category":"adversarial","response_a":{"scores":{"correctness_invariant":1,"source_of_truth_boundary":1,"failure_mode_handling":1,"idempotency_retry_safety":1,"operational_verification":1,"java_patch_quality":1,"anti_pattern_resistance":0},"rationale":"Adds deterministic tie-breaking over timestamps but keeps blanket whole-object last-write-wins semantics. Still relies on mutable wall-clock ordering as primary truth and can silently drop concurrent independent edits. It introduces no causal metadata workflow, no explicit conflict retention, and no user-facing conflict handling. Tests exist but do not validate merge-safe behavior for field-level conflicts; one comparator helper in tests appears inconsistent (uses nonexistent accessor methods on ProfileMeta), which also weakens patch quality. Fails adversarial anti-pattern bar."},"response_b":{"scores":{"correctness_invariant":1,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":1,"operational_verification":1,"java_patch_quality":1,"anti_pattern_resistance":1},"rationale":"Moves decision key off raw timestamps, explicitly acknowledges wall-clock is unreliable, and proposes persisted revision/tiebreak metadata with transactional write ordering and replay handling. This is materially stronger on operational semantics and failure handling than A, and aligns better with source-of-truth flow. However, resolver still enforces single-winner profile-wide LWW and does not preserve per-field merges or explicit unresolved-conflict records, so product correctness for concurrent independent edits remains incomplete. Operational verification is described but not implemented as executable tests, and idempotency support is partly procedural rather than embedded in patch code."},"winner":"B","rationale":"Response B is superior overall: it better handles cross-region concurrency risks and operational failure modes with durable metadata and explicit caveats, while Response A remains mostly timestamp-based whole-object LWW. Neither reaches full adversarial pass because anti-pattern resistance is below 2 and neither preserves mergeable field-level correctness or explicit conflict states."}
+tokens used
+7,324
+
+
+exit_code: 0

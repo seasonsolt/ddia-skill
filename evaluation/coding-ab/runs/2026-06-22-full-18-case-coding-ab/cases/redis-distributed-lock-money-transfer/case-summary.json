@@ -1,0 +1,20 @@
+{
+  "case_id": "redis-distributed-lock-money-transfer",
+  "category": "adversarial",
+  "mapping": {
+    "A": "control",
+    "B": "treatment"
+  },
+  "control_total": 13,
+  "treatment_total": 11,
+  "denominator": 14,
+  "control_pass": true,
+  "treatment_pass": false,
+  "lift": -2,
+  "normalized_lift": -0.1428571428571429,
+  "score_winner": "control",
+  "judge_winner": "control",
+  "control_rationale": "Strong shift of correctness to DB transaction + row-level locks and durable idempotency state; added validation and deterministic dual lock ordering. Main gap is missing concrete operational verification (no tests/metrics), but core money-movement semantics are mostly sound under retries/crash/pause scenarios.",
+  "treatment_rationale": "Solid reasoning and good observability/fault-injection testing guidance, but includes a concrete bug in lock key derivation (`second` can equal `first`) and limited input validation, which weakens patch quality and leaves concurrency/progress behavior less reliable than it should be.",
+  "judge_rationale": "Response A is superior overall: it is more patch-correct and maintains stronger correctness posture for transfer execution, while Response B has a tangible lock-ordering defect and weaker patch quality despite better operational commentary. A is improved relative to B on correctness robustness and implementation reliability, with only minor verification coverage missing."
+}

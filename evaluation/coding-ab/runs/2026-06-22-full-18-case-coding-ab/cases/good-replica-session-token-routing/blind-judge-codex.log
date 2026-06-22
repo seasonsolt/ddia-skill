@@ -1,0 +1,290 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/good-replica-session-token-routing/blind-judge-raw.json --output-schema /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/judge-output-schema.json -
+
+## stdout
+{"case_id":"good-replica-session-token-routing","category":"good","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":1,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Strongly aligns with expected session-token pattern: keeps replica-first reads with bounded primary fallback, and explicitly handles replica miss/lag via minVersion. Operational checks are practical and include the right lag/fallback metrics and fault-injection tests. Weakest point is idempotency/retry safety: it calls out duplicate-write risks but does not propose concrete idempotency logic."},"response_b":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":1,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Also preserves the intended design and adds meaningful hardening: input validation, explicit fallback helper, and clearer observability proposals including circuit-breaking/throttle signals. However, idempotency/retry behavior is still only implied, not engineered (e.g., update deduplication). A small risk of over-strict defensive checks (for invalid versions/version-regression) is present but not a major correctness failure."},"winner":"tie","rationale":"Both answers correctly recommend the DDIA-appropriate solution (replica-first with version-gated fallback to primary) and provide solid Java + operational coverage. Neither demonstrates a clear quality edge in the scored dimensions beyond minor presentation/rigor differences, so they tie."}
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7b-6550-72c0-92ad-a59b6b0fc388
+--------
+user
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: good-replica-session-token-routing
+Category: good
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: good-replica-session-token-routing
+
+Case ID: good-replica-session-token-routing
+Category: good
+Language: Java
+Primary DDIA topics: replicated reads, user-visible freshness, routing
+
+## Scenario
+
+A profile service returns the saved profile after an update and includes a version marker for the client to pass on later profile reads. The team asks whether this should be simplified by sending every profile read to the main database.
+
+## Flawed Java
+
+```java
+public final class ProfileService {
+    private final ProfilePrimaryRepository primary;
+    private final ProfileReplicaRepository replica;
+
+    public UpdatedProfile updateDisplayName(UUID userId, String displayName) {
+        Profile saved = primary.updateDisplayNameReturningRow(userId, displayName);
+        return new UpdatedProfile(saved, saved.version());
+    }
+
+    public Profile readProfile(UUID userId, long minVersion) {
+        Optional<Profile> fromReplica = replica.findByIdAtLeastVersion(userId, minVersion);
+        return fromReplica.orElseGet(() -> primary.findById(userId));
+    }
+}
+```
+
+## Task
+
+Review the code, assess whether a Java-oriented patch is needed, and justify the operational checks that would protect this design.
+
+## Expected DDIA Reasoning
+
+The answer should recognize that returning the primary write result plus using a version or LSN token on later reads protects read-your-writes without routing every read to the primary. The replica can still serve reads that have caught up, while the primary fallback handles sessions that require a newer version.
+
+## Strong Patch Signals
+
+- Keeps bounded primary fallback instead of removing replicas globally.
+- Uses version/LSN routing or session tokens to avoid stale reads.
+- Adds replica-lag metrics, fallback-rate metrics, and tests that simulate lag.
+
+## Weak Patch Patterns
+
+- Removes all replica reads even when only session freshness needs primary fallback.
+- Adds fixed sleeps before reading from the replica.
+- Claims eventual consistency is always fine for the post-update user session.
+
+## Scoring Notes
+
+- Award high scores for preserving scale-out reads while making the freshness guarantee explicit.
+- Penalize answers that ignore the version token or treat primary routing as an all-or-nothing choice.
+
+
+## Response A
+
+You’re asking for a DDIA-style Java review of this profile service, including whether the current replica-read pattern needs a patch, and what operational checks keep it correct in practice.
+
+### 1) Assumptions and workload shape
+- Primary DB is the source of truth; replica is an optimization for read latency.
+- Client is expected to send a monotonic `minVersion` token after an update.
+- Workload is read-heavy and can tolerate slight staleness, but must satisfy read-your-writes behavior when a client uses the returned token.
+- Availability matters: reads should usually succeed even during replica incidents.
+
+### 2) Recommendation
+- Keep the design: query replica first, then fallback to primary.
+- A Java patch is needed: `readProfile` must handle replica failures explicitly and still fallback to primary, otherwise a replica outage turns a replica-optimization into a hard read failure.
+- No claim of global linearizability: this is “best-effort read-your-writes via version token,” not full serializable read semantics.
+
+Smallest practical patch:
+
+```java
+public Profile readProfile(UUID userId, long minVersion) {
+    // primary is the source of truth; replica is a consistency-optimized fast path
+    if (minVersion <= 0) {
+        return primary.findById(userId);
+    }
+
+    try {
+        return replica.findByIdAtLeastVersion(userId, minVersion)
+                       .orElseGet(() -> {
+                           // optional metric: replica fallback on version lag
+                           return primary.findById(userId);
+                       });
+    } catch (Exception e) {
+        // optional metric: replica read error/fallback
+        // log warning with userId/minVersion
+        return primary.findById(userId);
+    }
+}
+```
+
+### 3) Key trade-offs
+- Replica-first keeps low-latency reads under normal conditions.
+- Fallback to primary guarantees correctness path when replica is behind or unavailable, but with higher latency on lag/incident events.
+- Not retrying replica blindly avoids extra load during outage; if desired, add a bounded retry (single quick attempt with timeout) rather than indefinite loops.
+
+### 4) Failure modes
+- Replication lag: primary has higher version than replica; `minVersion`-based check avoids this via fallback.
+- Replica transient failure: currently uncaught, causing exception instead of successful fallback.
+- Bad token inputs (`minVersion <= 0` or stale by client): behavior must be explicit (`primary` for non-positive, optional strict validation).
+- Duplicate update retries: repeated writes may create extra version bumps if callers retry blindly.
+
+### 5) Consistency and correctness implications
+- This is a distributed data problem because state is duplicated across primary/replica with asynchronous propagation.
+- The version marker is a client-coordination mechanism, not a distributed transaction protocol.
+- `updateDisplayNameReturningRow` must return the committed version in one atomic DB operation (`UPDATE ... RETURNING` or equivalent in same transaction) so the token is valid.
+- `readProfile` guarantees monotonic read for that client token, not global snapshot guarantees across arbitrary readers.
+
+### 6) Operational visibility
+- Track `replica_fallback_count` (version lag + timeout/error fallsbacks).
+- Track `replica_read_error_count` and `replica_read_latency_ms`.
+- Track `fallback_to_primary_count` and `primary_read_latency_ms`.
+- Track `max_replication_lag_ms` and sampled `primary_version - replica_version` deltas.
+- Alert on high `replica_fallback_count` / high lag while traffic is high; that is a user-facing staleness risk.
+
+### 7) Tests or experiments to validate
+- Unit/integration tests:
+  - stale replica path returns primary when version is behind.
+  - replica miss with version satisfied returns replica.
+  - replica exception triggers primary fallback successfully.
+  - `minVersion <= 0` routes to primary (or documented behavior).
+- Concurrency test:
+  - two writers, one reader with token, ensure read-your-writes contract holds for token-bearing caller.
+- Fault injection:
+  - simulate replica delay, timeout, and network error; verify no hard read failures.
+- Idempotency safety test (if retry semantics expected):
+  - retry same display-name update should either be harmless or explicitly deduplicated.
+
+## Response B
+
+Your request is: “Should we simplify profile reads by always querying the primary DB, and what Java patch plus operational checks would you recommend?”
+
+You should **not** force all reads to primary. Keep the version-aware replica-first read; it is the right optimization for balancing freshness and load. But the current code needs a small hardening patch for production behavior.
+
+### Review verdict
+- Main risk: replica exceptions are not handled. A transient replica error now fails the request instead of safely falling back to primary.
+- Current logic assumes `findById` always returns a profile object and that callers pass valid inputs.
+- No observability: fallback events are invisible, so stale-read behavior can become a silent outage.
+
+### Recommended Java patch
+```java
+public final class ProfileService {
+    private final ProfilePrimaryRepository primary;
+    private final ProfileReplicaRepository replica;
+
+    public UpdatedProfile updateDisplayName(UUID userId, String displayName) {
+        if (userId == null) {
+            throw new IllegalArgumentException("userId must not be null");
+        }
+        if (displayName == null || displayName.isBlank()) {
+            throw new IllegalArgumentException("displayName must not be null or blank");
+        }
+
+        Profile saved = primary.updateDisplayNameReturningRow(userId, displayName);
+        if (saved == null) {
+            throw new IllegalStateException("Profile update returned null for userId=" + userId);
+        }
+        return new UpdatedProfile(saved, saved.version());
+    }
+
+    public Profile readProfile(UUID userId, long minVersion) {
+        if (userId == null) {
+            throw new IllegalArgumentException("userId must not be null");
+        }
+        if (minVersion < 0) {
+            throw new IllegalArgumentException("minVersion must be >= 0");
+        }
+
+        try {
+            return replica.findByIdAtLeastVersion(userId, minVersion)
+                    .orElseGet(() -> readFromPrimary(userId, minVersion));
+        } catch (RuntimeException ex) {
+            // TODO: increment replica_fallback counter here (and increment replica_error)
+            return readFromPrimary(userId, minVersion);
+        }
+    }
+
+    private Profile readFromPrimary(UUID userId, long minVersion) {
+        // TODO: increment fallback_to_primary counter here
+        Profile profile = primary.findById(userId);
+        if (profile == null) {
+            throw new NoSuchElementException("Profile not found for userId=" + userId);
+        }
+        if (profile.version() < minVersion) {
+            // Defensive check for unexpected version regression / data corruption scenarios
+            throw new IllegalStateException(
+                "Primary returned profile version " + profile.version()
+                + " below requested minVersion " + minVersion + " for userId=" + userId
+            );
+        }
+        return profile;
+    }
+}
+```
+
+### Operational checks to protect this design
+- Track `replica_read_attempts`, `replica_read_hits`, `replica_read_misses`, and `replica_read_errors`.
+- Track `read_fallback_to_primary` and alert on rising fallback percentage (canary for replication lag or replica outage).
+- Track replica replication lag and alert if it exceeds your freshness SLO.
+- Track `minVersion` vs returned version delta and alert on any delta where replica returns below requested version.
+- Add circuit-breaker/timeout for replica reads and route directly to primary when unhealthy.
+- Add alerts on `primary` fallback load spikes (protect primary saturation risk).
+- Chaos / integration checks:
+  - forced replica delay,
+  - replica connection failure,
+  - slow replica,
+  - version monotonicity under concurrent updates.
+
+codex
+{"case_id":"good-replica-session-token-routing","category":"good","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":1,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Strongly aligns with expected session-token pattern: keeps replica-first reads with bounded primary fallback, and explicitly handles replica miss/lag via minVersion. Operational checks are practical and include the right lag/fallback metrics and fault-injection tests. Weakest point is idempotency/retry safety: it calls out duplicate-write risks but does not propose concrete idempotency logic."},"response_b":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":1,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Also preserves the intended design and adds meaningful hardening: input validation, explicit fallback helper, and clearer observability proposals including circuit-breaking/throttle signals. However, idempotency/retry behavior is still only implied, not engineered (e.g., update deduplication). A small risk of over-strict defensive checks (for invalid versions/version-regression) is present but not a major correctness failure."},"winner":"tie","rationale":"Both answers correctly recommend the DDIA-appropriate solution (replica-first with version-gated fallback to primary) and provide solid Java + operational coverage. Neither demonstrates a clear quality edge in the scored dimensions beyond minor presentation/rigor differences, so they tie."}
+tokens used
+13,401
+
+
+exit_code: 0

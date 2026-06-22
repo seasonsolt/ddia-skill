@@ -1,0 +1,36 @@
+{
+  "case_id": "good-cache-aside-product-preview",
+  "category": "good",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 12,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Strong: keeps Postgres as source of truth, treats Redis as non-authoritative cache, fails open on Redis/JSON failures, handles missing product safely, and discusses TTL/staleness/invalidation expectations. Operational checks are relevant to preview staleness and cache health, and failure modes are concretely covered."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 1,
+      "anti_pattern_resistance": null
+    },
+    "total": 11,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Generally good and practical, with defensive coding and observability, but the negative-cache branch is ineffective because the marker is not used to short-circuit DB fallback (`MISSING_MARKER` still leads to DB lookup), so one stated issue remains unresolved. Some added structure is clean, but this weakens patch completeness."
+  },
+  "winner": "A",
+  "rationale": "Response A is stronger because it aligns more directly with DDIA requirements for derived-data caching correctness and fail-open behavior while avoiding unnecessary cache-dependence and preserving clear source-of-truth boundaries."
+}

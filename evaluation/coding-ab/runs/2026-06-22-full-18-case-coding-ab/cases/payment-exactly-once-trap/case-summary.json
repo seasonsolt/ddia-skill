@@ -1,0 +1,20 @@
+{
+  "case_id": "payment-exactly-once-trap",
+  "category": "adversarial",
+  "mapping": {
+    "A": "treatment",
+    "B": "control"
+  },
+  "control_total": 8,
+  "treatment_total": 13,
+  "denominator": 14,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 5,
+  "normalized_lift": 0.3571428571428572,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Uses a reasonable lease+attempt design and correctly rejects absolute exactly-once guarantees, but leaves an important control-flow gap: retries can be short-circuited while PROCESSING without a clear forward-recovery step, so completion can stall. Idempotency and attempt matching are present yet not strongly closed (no check of markPaid result). Lacks concrete operational verification artifacts beyond brief textual caveats.",
+  "treatment_rationale": "Strong end-to-end reasoning and correct framing: separates external gateway side effects from DB state, stores claim/state before gateway call, uses idempotency key, and makes payment completion conditional. Explicitly avoids claiming exact-once. Operational checks and recovery/monitoring suggestions are present. Patch is practical but not fully production-polished (transaction annotation still spans external call and recovery write path is described rather than fully implemented).",
+  "judge_rationale": "Response A is stronger overall: it is clearer about distributed split-brain limitations, provides more complete state-transition handling and explicit observability/tests, and offers a more directly safe retry path for duplicate invocations."
+}

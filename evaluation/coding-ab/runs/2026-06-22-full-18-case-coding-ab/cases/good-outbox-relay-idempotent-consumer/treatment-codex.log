@@ -1,0 +1,327 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/good-outbox-relay-idempotent-consumer/treatment-response.md -
+
+## stdout
+You asked for a distributed-design review of this Java outbox + consumer pattern, with a minimal correctness patch and operational checks.
+
+## Assumptions and workload shape
+- Order creation is write-heavy in bursts and each successful order must eventually trigger one shipment.
+- Duplicate shipments are business-critical correctness failures.
+- The system tolerates at-least-once message delivery, but not double side effects.
+- Outbox is used as the source-of-truth bridge between transactional DB state and async processing.
+
+## Source of truth and consistency goals
+- Source of truth for order state: `orders`.
+- Outbox is durable intent/event log, not the source of business truth.
+- Shipment table is derived state and must be idempotent.
+- Moving Kafka send into the request path removes atomicity unless you use transactional messaging with careful coordinator design.
+
+## Recommendation (smallest practical patch)
+The biggest distributed-data bug is **not in the shown `createOrder` transaction itself**, but in the boundary between event publication and consumption if you “simplify” to synchronous Kafka send.
+
+Smallest patch:
+1. Keep outbox in the request path transaction.
+2. Persist a stable event id once in outbox and use it as the message id for dedupe.
+3. Make `tryInsert` and `createIfAbsent` atomic via unique constraints, not best-effort logic.
+
+```java
+public final class OrderService {
+    public UUID createOrder(CreateOrder command) {
+        UUID orderId = orders.insert(command);
+        UUID eventId = UUID.randomUUID(); // stable dedupe key
+        outbox.insert(new OutboxEvent(
+            eventId,
+            "order-created",
+            orderId.toString(),
+            new OrderCreated(orderId)
+        ));
+        return orderId;
+    }
+}
+
+public final class FulfillmentConsumer {
+    private final ProcessedMessageRepository processed;
+    private final ShipmentRepository shipments;
+
+    @Transactional
+    public void onOrderCreated(UUID messageId, OrderCreated event) {
+        if (!processed.tryInsert(messageId)) { // unique INSERT INTO processed(message_id) VALUES (?) ON CONFLICT DO NOTHING
+            return;
+        }
+        shipments.createIfAbsent(event.orderId()); // INSERT ... ON CONFLICT DO NOTHING by order_id
+    }
+}
+```
+
+Also required schema guarantees:
+- `processed(message_id)` must be `UNIQUE`.
+- `shipments(order_id)` should be `UNIQUE`.
+- Kafka message should carry the outbox `eventId`; the consumer should dedupe on that value.
+
+## Key trade-offs
+- You keep outbox latency (extra polling/relay step) but preserve correctness under partial failure.
+- Direct request-path Kafka send is lower latency on happy path, but weakens durability and can produce missing/duplicate fulfillment work under failure.
+- You get “at-least-once + idempotent handling,” not true end-to-end exactly-once.
+
+## Failure modes
+- DB commit succeeds, event not published.
+- Event published, DB transaction rolled back.
+- Consumer crashes after marking `processed` but before shipment write commit.
+- Consumer reprocesses same message after restart/rebalance.
+- Relay worker duplicates publishes or reorders same event.
+- Dedupe store/shipments table outages causing delayed or partial processing.
+
+## Consistency and correctness implications
+- `@Transactional` on both sides gives local atomicity only.
+- Without stable dedupe keys + uniqueness constraints, duplicates can still pass through as separate DB writes.
+- A distributed transaction across DB + Kafka is unnecessary here if outbox + idempotent consumer are implemented correctly.
+- You can only claim: “no shipment duplicates” and “order is persisted iff outbox intent exists,” not “exactly-once end-to-end delivery by default.”
+
+## Operational checks
+- Outbox lag: count and age of `PENDING` outbox rows; alert if queue age grows.
+- Publish reliability: outbox publish failures and retry counts with exponential backoff/dead-letter thresholds.
+- Dedup effectiveness: ratio of `processed` duplicate inserts rejected.
+- Shipment correctness: mismatch count between `orders` with created time and expected shipments (lagging or missing).
+- Relay-to-consumer traceability: correlation id from `orderId` + `eventId` across logs.
+- Consumer lag and replay rate.
+
+## Tests / experiments to validate
+- Simulate crash after outbox insert, before publish.
+- Simulate Kafka send failure with retry loops.
+- Simulate duplicate deliveries; verify only one shipment row exists.
+- Simulate redelivery order with consumer retries after partial failures.
+- Load test hot order creation to confirm `shipments(order_id)` unique constraint prevents duplicates under concurrent events.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7a-a672-7fe1-ab34-f9e434dafc39
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+An order service writes an order row and also stores a durable follow-up work record for fulfillment. A separate fulfillment handler ignores messages it has already seen before creating shipments. The team asks whether this should be simplified by sending directly to Kafka from the request path because it seems more immediate.
+
+## Java Code
+
+```java
+public final class OrderService {
+    private final OrderRepository orders;
+    private final OutboxRepository outbox;
+
+    @Transactional
+    public UUID createOrder(CreateOrder command) {
+        UUID orderId = orders.insert(command);
+        outbox.insert(new OutboxEvent("order-created", orderId.toString(), new OrderCreated(orderId)));
+        return orderId;
+    }
+}
+
+public final class FulfillmentConsumer {
+    private final ProcessedMessageRepository processed;
+    private final ShipmentRepository shipments;
+
+    @Transactional
+    public void onOrderCreated(String messageId, OrderCreated event) {
+        if (!processed.tryInsert(messageId)) {
+            return;
+        }
+        shipments.createIfAbsent(event.orderId());
+    }
+}
+```
+
+## Task
+
+Review the code, assess whether a Java-oriented patch is needed, and justify the operational checks that would protect this design.
+
+codex
+You asked for a distributed-design review of this Java outbox + consumer pattern, with a minimal correctness patch and operational checks.
+
+## Assumptions and workload shape
+- Order creation is write-heavy in bursts and each successful order must eventually trigger one shipment.
+- Duplicate shipments are business-critical correctness failures.
+- The system tolerates at-least-once message delivery, but not double side effects.
+- Outbox is used as the source-of-truth bridge between transactional DB state and async processing.
+
+## Source of truth and consistency goals
+- Source of truth for order state: `orders`.
+- Outbox is durable intent/event log, not the source of business truth.
+- Shipment table is derived state and must be idempotent.
+- Moving Kafka send into the request path removes atomicity unless you use transactional messaging with careful coordinator design.
+
+## Recommendation (smallest practical patch)
+The biggest distributed-data bug is **not in the shown `createOrder` transaction itself**, but in the boundary between event publication and consumption if you “simplify” to synchronous Kafka send.
+
+Smallest patch:
+1. Keep outbox in the request path transaction.
+2. Persist a stable event id once in outbox and use it as the message id for dedupe.
+3. Make `tryInsert` and `createIfAbsent` atomic via unique constraints, not best-effort logic.
+
+```java
+public final class OrderService {
+    public UUID createOrder(CreateOrder command) {
+        UUID orderId = orders.insert(command);
+        UUID eventId = UUID.randomUUID(); // stable dedupe key
+        outbox.insert(new OutboxEvent(
+            eventId,
+            "order-created",
+            orderId.toString(),
+            new OrderCreated(orderId)
+        ));
+        return orderId;
+    }
+}
+
+public final class FulfillmentConsumer {
+    private final ProcessedMessageRepository processed;
+    private final ShipmentRepository shipments;
+
+    @Transactional
+    public void onOrderCreated(UUID messageId, OrderCreated event) {
+        if (!processed.tryInsert(messageId)) { // unique INSERT INTO processed(message_id) VALUES (?) ON CONFLICT DO NOTHING
+            return;
+        }
+        shipments.createIfAbsent(event.orderId()); // INSERT ... ON CONFLICT DO NOTHING by order_id
+    }
+}
+```
+
+Also required schema guarantees:
+- `processed(message_id)` must be `UNIQUE`.
+- `shipments(order_id)` should be `UNIQUE`.
+- Kafka message should carry the outbox `eventId`; the consumer should dedupe on that value.
+
+## Key trade-offs
+- You keep outbox latency (extra polling/relay step) but preserve correctness under partial failure.
+- Direct request-path Kafka send is lower latency on happy path, but weakens durability and can produce missing/duplicate fulfillment work under failure.
+- You get “at-least-once + idempotent handling,” not true end-to-end exactly-once.
+
+## Failure modes
+- DB commit succeeds, event not published.
+- Event published, DB transaction rolled back.
+- Consumer crashes after marking `processed` but before shipment write commit.
+- Consumer reprocesses same message after restart/rebalance.
+- Relay worker duplicates publishes or reorders same event.
+- Dedupe store/shipments table outages causing delayed or partial processing.
+
+## Consistency and correctness implications
+- `@Transactional` on both sides gives local atomicity only.
+- Without stable dedupe keys + uniqueness constraints, duplicates can still pass through as separate DB writes.
+- A distributed transaction across DB + Kafka is unnecessary here if outbox + idempotent consumer are implemented correctly.
+- You can only claim: “no shipment duplicates” and “order is persisted iff outbox intent exists,” not “exactly-once end-to-end delivery by default.”
+
+## Operational checks
+- Outbox lag: count and age of `PENDING` outbox rows; alert if queue age grows.
+- Publish reliability: outbox publish failures and retry counts with exponential backoff/dead-letter thresholds.
+- Dedup effectiveness: ratio of `processed` duplicate inserts rejected.
+- Shipment correctness: mismatch count between `orders` with created time and expected shipments (lagging or missing).
+- Relay-to-consumer traceability: correlation id from `orderId` + `eventId` across logs.
+- Consumer lag and replay rate.
+
+## Tests / experiments to validate
+- Simulate crash after outbox insert, before publish.
+- Simulate Kafka send failure with retry loops.
+- Simulate duplicate deliveries; verify only one shipment row exists.
+- Simulate redelivery order with consumer retries after partial failures.
+- Load test hot order creation to confirm `shipments(order_id)` unique constraint prevents duplicates under concurrent events.
+tokens used
+9,087
+
+
+exit_code: 0

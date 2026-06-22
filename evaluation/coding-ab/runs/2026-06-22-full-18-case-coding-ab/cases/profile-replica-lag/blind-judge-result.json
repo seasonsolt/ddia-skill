@@ -1,0 +1,36 @@
+{
+  "case_id": "profile-replica-lag",
+  "category": "bad",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 1,
+      "java_patch_quality": 1,
+      "anti_pattern_resistance": null
+    },
+    "total": 8,
+    "denominator": 12,
+    "pass": false,
+    "rationale": "Identifies replica lag and read-your-writes correctly, and uses a version/timestamp marker to prefer replica while falling back to primary, so correctness is mostly addressed. However, it introduces a synchronous fixed-delay retry loop on replicas, which is brittle and still partially heuristic, and offers no explicit validation/metrics/testing beyond code changes; the patch quality is weakened by the sleep-based polling and incomplete operational guidance."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 10,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Directly enforces read-your-writes for the write API by reading back from primary (or returning updated row if available), which cleanly matches the DDIA boundary for this request without routing all traffic to primary. It includes practical reasoning about asynchronous replica staleness, failure behavior, idempotency, and concrete operational checks/tests, while the Java patch is minimal and clearly correct for the stated goal."
+  },
+  "winner": "B",
+  "rationale": "Response B scores higher because it gives a simpler, production-safe read-your-writes fix with stronger operational guidance and avoids the polling/sleep anti-pattern, while preserving replica use for normal read traffic."
+}

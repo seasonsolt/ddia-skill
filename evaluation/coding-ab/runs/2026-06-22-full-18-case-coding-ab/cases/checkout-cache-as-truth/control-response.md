@@ -1,0 +1,90 @@
+A more natural way to say your request is: “Please review this Java checkout code and give a small patch that improves correctness for flash sales, with tests covering crashes, retries, and oversell under heavy concurrency.”
+
+### Java patch (recommended)
+
+The correctness gap is that a successful Redis decrement is not compensated when order persistence fails, and retries can double-reserve stock. The safe minimal fix is:
+- add a small idempotency guard, and
+- rollback the Redis decrement on any `OrderRepository` failure.
+
+```java
+public final class CheckoutService {
+    private final RedisClient redis;
+    private final OrderRepository orders;
+
+    private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(10);
+
+    public Receipt checkout(String sku, String userId, String requestId) {
+        String stockKey = "stock:" + sku;
+        String idemKey = "checkout:" + requestId + ":" + sku;
+
+        String existing = redis.get(idemKey);
+        if (existing != null) {
+            if (existing.startsWith("OK:")) {
+                return Receipt.fromId(existing.substring(3)); // helper: Receipt.fromId(String)
+            }
+            if ("IN_PROGRESS".equals(existing)) {
+                throw new CheckoutInProgressException(requestId);
+            }
+        }
+
+        if (!redis.setIfAbsent(idemKey, "IN_PROGRESS", IDEMPOTENCY_TTL)) {
+            throw new CheckoutInProgressException(requestId);
+        }
+
+        long remaining = redis.decr(stockKey);
+        if (remaining < 0) {
+            redis.incr(stockKey);
+            redis.set(idemKey, "FAILED:SoldOut", IDEMPOTENCY_TTL);
+            throw new SoldOutException(sku);
+        }
+
+        try {
+            Order order = orders.insert(new Order(sku, userId, "CONFIRMED"));
+            Receipt receipt = new Receipt(order.id(), "confirmed");
+            redis.set(idemKey, "OK:" + order.id(), IDEMPOTENCY_TTL);
+            return receipt;
+        } catch (Exception e) {
+            // Critical compensation on any repo failure during checkout
+            redis.incr(stockKey);
+            redis.set(idemKey, "FAILED:" + e.getClass().getSimpleName(), IDEMPOTENCY_TTL);
+            throw e;
+        }
+    }
+}
+```
+
+### Why this addresses your risks
+
+1. Prevents stock loss when DB write fails after decrement by compensating (`incr`) in catch.
+2. Prevents retry over-consumption by making requests idempotent via `requestId`.
+3. Handles concurrent duplicate retry attempts safely with `IN_PROGRESS` marker + bounded TTL.
+
+### Tests to add (Junit-style)
+
+1. `rollbackWhenOrderInsertFails_shouldRestoreStock`
+   - Set stock to `10`.
+   - Make `orders.insert` throw on call.
+   - Assert `checkout` throws, `stock:"sku"` returns to `10`, and idempotency key is marked failed.
+
+2. `retrySameRequest_afterTransientFailure_shouldCreateAtMostOneOrderAndOneDecrement`
+   - First call with `requestId` causes insert failure after stock decrement.
+   - Ensure stock restored and key is FAILED.
+   - Second retry with same `requestId` succeeds.
+   - Assert only 1 order row, final stock decremented by exactly 1.
+
+3. `retrySameRequestId_whenFirstCallCompletes_returnsSameReceipt`
+   - First call succeeds and stores `OK:orderId`.
+   - Second call with same `requestId` returns same receipt.
+   - Assert `orders.insert` called exactly once and stock decremented exactly once.
+
+4. `concurrentFlashSale_oversellPressure_shouldNeverGoNegativeOrExceedInventory`
+   - Initial stock = `100`.
+   - Run 1,000 concurrent checkouts with distinct requestIds.
+   - Assert at most 100 successful checkouts, 900 failed with sold-out/retry handling, and final stock is never negative.
+
+5. `inProgressRetryWindow_shouldReturnInProgressOnConcurrentDuplicateRequest`
+   - Start one call and pause before DB insert.
+   - Concurrent duplicate with same `requestId` should get `CheckoutInProgressException`.
+   - After first completes, duplicate with same requestId should get cached success/failure result.
+
+If you want, I can provide this as a strict `git diff` style patch next.

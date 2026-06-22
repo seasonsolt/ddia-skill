@@ -1,0 +1,20 @@
+{
+  "case_id": "multi-region-last-write-wins-profile",
+  "category": "adversarial",
+  "mapping": {
+    "A": "control",
+    "B": "treatment"
+  },
+  "control_total": 6,
+  "treatment_total": 9,
+  "denominator": 14,
+  "control_pass": false,
+  "treatment_pass": false,
+  "lift": 3,
+  "normalized_lift": 0.21428571428571436,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Adds deterministic tie-breaking over timestamps but keeps blanket whole-object last-write-wins semantics. Still relies on mutable wall-clock ordering as primary truth and can silently drop concurrent independent edits. It introduces no causal metadata workflow, no explicit conflict retention, and no user-facing conflict handling. Tests exist but do not validate merge-safe behavior for field-level conflicts; one comparator helper in tests appears inconsistent (uses nonexistent accessor methods on ProfileMeta), which also weakens patch quality. Fails adversarial anti-pattern bar.",
+  "treatment_rationale": "Moves decision key off raw timestamps, explicitly acknowledges wall-clock is unreliable, and proposes persisted revision/tiebreak metadata with transactional write ordering and replay handling. This is materially stronger on operational semantics and failure handling than A, and aligns better with source-of-truth flow. However, resolver still enforces single-winner profile-wide LWW and does not preserve per-field merges or explicit unresolved-conflict records, so product correctness for concurrent independent edits remains incomplete. Operational verification is described but not implemented as executable tests, and idempotency support is partly procedural rather than embedded in patch code.",
+  "judge_rationale": "Response B is superior overall: it better handles cross-region concurrency risks and operational failure modes with durable metadata and explicit caveats, while Response A remains mostly timestamp-based whole-object LWW. Neither reaches full adversarial pass because anti-pattern resistance is below 2 and neither preserves mergeable field-level correctness or explicit conflict states."
+}

@@ -1,0 +1,293 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/stream-consumer-non-idempotent/treatment-response.md -
+
+## stdout
+A more natural version of your request: *“Please review this handler and propose the smallest Java patch that makes payment replay and duplicate delivery safe, while focusing on distributed-data concerns like source of truth, consistency, transactions, idempotency, failure modes, visibility, and tests.”*
+
+**1) Assumptions and workload shape**
+- Payment events are consumed from a stream with at least once delivery.
+- Restarts and replay can re-deliver the same `PaymentCaptured` event.
+- Each payment must contribute points exactly once per user.
+- `loyalty` storage is the system-of-record for balances.
+
+**2) Recommendation**
+The current handler is not idempotent: it always calls `addPoints`, so duplicates grant points multiple times.  
+Treat `paymentId` (or another unique event identifier) as an idempotency key and make the dedupe + balance update atomic in one DB transaction.
+
+Minimal patch pattern:
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = event.amountCents() / 100;
+        boolean applied = loyalty.applyPaymentOnce(event.paymentId(), event.userId(), points);
+        if (!applied) {
+            // duplicate replay; ignore
+        }
+    }
+}
+```
+
+```java
+@Transactional
+public boolean applyPaymentOnce(UUID paymentId, String userId, int points) {
+    int inserted = jdbc.update(
+        """
+        INSERT INTO processed_payments(payment_id, user_id, points)
+        VALUES (?, ?, ?)
+        ON CONFLICT (payment_id) DO NOTHING
+        """, paymentId, userId, points);
+
+    if (inserted == 0) {
+        return false;
+    }
+
+    jdbc.update("UPDATE loyalty_account SET points = points + ? WHERE user_id = ?", points, userId);
+    return true;
+}
+```
+
+Also add/ensure schema:
+- `processed_payments.payment_id` is `PRIMARY KEY` (or unique).
+- Optional: unique index per `(user_id, payment_id)` if needed for traceability.
+
+**3) Key trade-offs**
+- Adds one write + one read/insert check per event (small, usually acceptable).
+- Requires a durable idempotency store; this is a small schema change but gives a real correctness fix.
+- This improves against replay duplicates, not against missing/invalid payment IDs (if `paymentId` is absent you need synthetic keys or producer-side idempotency).
+
+**4) Failure modes**
+- Duplicate delivery: now swallowed after first successful insert.
+- Concurrent consumers processing same payment: only one insert succeeds due to unique constraint.
+- Crash between insert and commit: both insert and points update roll back together (transactional safety).
+- Crash after commit: event is safely marked processed, replay becomes no-op.
+- Null/unstable `paymentId`: system still vulnerable; must validate contract.
+
+**5) Consistency and correctness implications**
+- Source of truth remains the points table (balance), with `processed_payments` as write-ahead dedupe evidence.
+- Transaction boundary now defines correctness: “mark processed” and “apply points” are all-or-nothing.
+- You do not need global distributed consensus here; DB-level uniqueness plus single-writer atomic tx is enough for this duplicate class.
+
+**6) Operational visibility**
+- Count and expose metric: `loyalty.replay_deduped_events_total`.
+- Track failure metric: `loyalty.apply_payment_tx_failures_total`.
+- Alert on high duplicate ratio (may indicate producer retry storms).
+- Log with `paymentId`, `userId`, and result (`applied`/`skipped`) for incident tracing.
+
+**7) Tests to validate**
+- Duplicate event replay: same `paymentId` twice, balance changes once.
+- Concurrent duplicate replay (2+ threads): balance changes once and no deadlock/constraint exceptions.
+- Crash simulation before/after transaction: verify no partial update by forcing rollback.
+- Missing/invalid eventId test: assert event is rejected and measured as bad input.
+- Idempotency on full consumer restart/replay sequence: persisted balance remains correct.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef82-ce82-7d01-b47f-e96967554f90
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+A loyalty service grants points when payment events arrive from a stream. After a consumer restart and replay, some users received more points than expected for the same payment.
+
+## Java Code
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = event.amountCents() / 100;
+        loyalty.addPoints(event.userId(), points);
+    }
+}
+```
+
+## Task
+
+Review the handler and propose a patch that makes payment replay and duplicate delivery safe.
+
+codex
+A more natural version of your request: *“Please review this handler and propose the smallest Java patch that makes payment replay and duplicate delivery safe, while focusing on distributed-data concerns like source of truth, consistency, transactions, idempotency, failure modes, visibility, and tests.”*
+
+**1) Assumptions and workload shape**
+- Payment events are consumed from a stream with at least once delivery.
+- Restarts and replay can re-deliver the same `PaymentCaptured` event.
+- Each payment must contribute points exactly once per user.
+- `loyalty` storage is the system-of-record for balances.
+
+**2) Recommendation**
+The current handler is not idempotent: it always calls `addPoints`, so duplicates grant points multiple times.  
+Treat `paymentId` (or another unique event identifier) as an idempotency key and make the dedupe + balance update atomic in one DB transaction.
+
+Minimal patch pattern:
+
+```java
+public final class LoyaltyConsumer {
+    private final LoyaltyRepository loyalty;
+
+    public void onPaymentCaptured(PaymentCaptured event) {
+        int points = event.amountCents() / 100;
+        boolean applied = loyalty.applyPaymentOnce(event.paymentId(), event.userId(), points);
+        if (!applied) {
+            // duplicate replay; ignore
+        }
+    }
+}
+```
+
+```java
+@Transactional
+public boolean applyPaymentOnce(UUID paymentId, String userId, int points) {
+    int inserted = jdbc.update(
+        """
+        INSERT INTO processed_payments(payment_id, user_id, points)
+        VALUES (?, ?, ?)
+        ON CONFLICT (payment_id) DO NOTHING
+        """, paymentId, userId, points);
+
+    if (inserted == 0) {
+        return false;
+    }
+
+    jdbc.update("UPDATE loyalty_account SET points = points + ? WHERE user_id = ?", points, userId);
+    return true;
+}
+```
+
+Also add/ensure schema:
+- `processed_payments.payment_id` is `PRIMARY KEY` (or unique).
+- Optional: unique index per `(user_id, payment_id)` if needed for traceability.
+
+**3) Key trade-offs**
+- Adds one write + one read/insert check per event (small, usually acceptable).
+- Requires a durable idempotency store; this is a small schema change but gives a real correctness fix.
+- This improves against replay duplicates, not against missing/invalid payment IDs (if `paymentId` is absent you need synthetic keys or producer-side idempotency).
+
+**4) Failure modes**
+- Duplicate delivery: now swallowed after first successful insert.
+- Concurrent consumers processing same payment: only one insert succeeds due to unique constraint.
+- Crash between insert and commit: both insert and points update roll back together (transactional safety).
+- Crash after commit: event is safely marked processed, replay becomes no-op.
+- Null/unstable `paymentId`: system still vulnerable; must validate contract.
+
+**5) Consistency and correctness implications**
+- Source of truth remains the points table (balance), with `processed_payments` as write-ahead dedupe evidence.
+- Transaction boundary now defines correctness: “mark processed” and “apply points” are all-or-nothing.
+- You do not need global distributed consensus here; DB-level uniqueness plus single-writer atomic tx is enough for this duplicate class.
+
+**6) Operational visibility**
+- Count and expose metric: `loyalty.replay_deduped_events_total`.
+- Track failure metric: `loyalty.apply_payment_tx_failures_total`.
+- Alert on high duplicate ratio (may indicate producer retry storms).
+- Log with `paymentId`, `userId`, and result (`applied`/`skipped`) for incident tracing.
+
+**7) Tests to validate**
+- Duplicate event replay: same `paymentId` twice, balance changes once.
+- Concurrent duplicate replay (2+ threads): balance changes once and no deadlock/constraint exceptions.
+- Crash simulation before/after transaction: verify no partial update by forcing rollback.
+- Missing/invalid eventId test: assert event is rejected and measured as bad input.
+- Idempotency on full consumer restart/replay sequence: persisted balance remains correct.
+tokens used
+3,534
+
+
+exit_code: 0

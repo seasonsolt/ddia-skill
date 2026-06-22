@@ -1,0 +1,20 @@
+{
+  "case_id": "good-outbox-relay-idempotent-consumer",
+  "category": "good",
+  "mapping": {
+    "A": "control",
+    "B": "treatment"
+  },
+  "control_total": 12,
+  "treatment_total": 10,
+  "denominator": 12,
+  "control_pass": true,
+  "treatment_pass": true,
+  "lift": -2,
+  "normalized_lift": -0.16666666666666663,
+  "score_winner": "control",
+  "judge_winner": "control",
+  "control_rationale": "A correctly preserves the outbox handoff and transactionality, explicitly rejects direct request-path Kafka publishing, and gives concrete operational checks for relay lag, retries, and duplicate drops. It also calls out the key idempotency/dedupe constraints and includes practical relay/monitoring guidance aligned with at-least-once semantics.",
+  "treatment_rationale": "B gives mostly correct architectural reasoning and good failure-mode checks, but its patch weakens the core invariant by omitting the transactional boundary on order+outbox writes in the shown code, which undermines the atomic handoff guarantee. The rest is solid on idempotency and operational checks but the Java patch is less complete.",
+  "judge_rationale": "Response A is stronger and less risky: it keeps and reinforces the atomic outbox pattern, avoids the transactional hole introduced in B, and provides fuller implementation-level controls for publication and observability. Response B is directionally correct but loses points on correctness due to the missing request-path transaction in its patch."
+}

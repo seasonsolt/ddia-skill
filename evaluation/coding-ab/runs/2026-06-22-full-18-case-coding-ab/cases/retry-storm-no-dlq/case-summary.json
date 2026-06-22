@@ -1,0 +1,20 @@
+{
+  "case_id": "retry-storm-no-dlq",
+  "category": "bad",
+  "mapping": {
+    "A": "treatment",
+    "B": "control"
+  },
+  "control_total": 7,
+  "treatment_total": 12,
+  "denominator": 12,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 5,
+  "normalized_lift": 0.41666666666666663,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Handles malformed and transient/permanent send failures plus ack failure retries, but lacks a durable truth source for processed messages and therefore only weakly guarantees exactly-once-like behavior. No explicit operational verification coverage (metrics/tests), and retry/ack handling is less defensible under real queue edge cases; `Thread.sleep` retrying in handler is also operationally risky.",
+  "treatment_rationale": "Strongest answer: introduces a durable ledger as source-of-truth, classifies malformed and permanent failures to DLQ, enforces bounded retries, and addresses ack-failure semantics with duplicate suppression via idempotent processing state. It also includes concrete observability and fault-injection style verification guidance.",
+  "judge_rationale": "Response A is a stronger and more complete fix across fault handling and correctness boundaries. It is superior on state-of-truth design, idempotency guarantees, and verifiability, so it is the better answer."
+}

@@ -1,0 +1,250 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/profile-replica-lag/treatment-response.md -
+
+## stdout
+A cleaner version of your scenario: users can save a new display name, but the service writes to the primary DB and immediately reads from a replica, so the same request can see a stale row because replica lag is expected.
+
+**Bug (and why it’s a distributed data problem)**
+- Your source of truth is the primary, but the read after write is served by an asynchronous replica.
+- The two calls are a distributed read/write split boundary, not an atomic operation.  
+- As soon as replication delay exists, `replica.findById` can return the old profile even though the write has committed.
+
+**Assumptions and workload shape**
+- Profile reads dominate, writes are user-driven and intermittent.
+- Correctness requirement is at least read-your-writes for the actor making the update.
+- Slightly higher write latency is acceptable; permanent sticky reads to primary are not.
+
+**Smallest correctness-improving patch**
+- Keep replica reads for normal traffic.
+- For this write API only, read back from primary (or write-and-return in one primary call).
+
+```java
+public final class ProfileService {
+    private final ProfilePrimaryRepository primary;
+    private final ProfileReplicaRepository replica;
+
+    public Profile updateDisplayName(UUID userId, String displayName) {
+        primary.updateDisplayName(userId, displayName);
+        return primary.findById(userId); // source of truth read
+    }
+}
+```
+
+If `updateDisplayName` can return the updated row, use that directly and skip the extra read.
+
+**Transaction boundaries**
+- `update` + `read` should stay in a single primary data path, ideally in the same DB transaction/connection scope for read-your-writes semantics.
+- Do not mix write-primary and immediate read-replica in the same user request unless you add explicit replication-coordination logic.
+
+**Consistency and correctness implications**
+- This guarantees the response for this request is correct.
+- It does **not** guarantee zero staleness for other concurrent readers, which is normal with async replicas.
+- You should state this in SLAs (e.g., user-facing write responses are strong; cross-request replica freshness is eventual).
+
+**Idempotency**
+- Retry behavior should be explicit: repeated identical retries (`same userId + same displayName`) are effectively idempotent.
+- Add idempotency handling at API boundary only if clients retry automatically and you need stronger safety against duplicate intent.
+
+**Failure modes**
+- Primary write succeeds but primary read fails: return retryable 5xx vs compensating read from replica (may return stale).
+- Primary is unavailable while replica is up: don’t silently fall back to replica for this path, or you reintroduce stale visibility.
+- Concurrent update races: last write wins unless you use version checks (`updated_at`/version column) if business rules require monotonic updates.
+
+**Operational checks**
+- Track primary write latency for this endpoint.
+- Track replica lag metrics and read-replica staleness diff checks (primary vs replica profile checksums per sampled user).
+- Track count of stale responses for user-facing write calls (must go to zero after this fix).
+
+**Tests**
+- Unit test: verify `updateDisplayName` returns updated value after update.
+- Integration test with replication lag simulation: force stale replica, ensure write path returns fresh primary value.
+- Retry/idempotency test: repeated same request should keep resulting value consistent.
+- Chaos test: primary write succeeds, primary read fails, and service returns deterministic error path.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7f-9963-70b2-a739-3e83e4d6b5a8
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+A profile service writes to the primary database and immediately reads from a read replica to return the updated profile. Users intermittently see their old display name after saving.
+
+## Java Code
+
+```java
+public final class ProfileService {
+    private final ProfilePrimaryRepository primary;
+    private final ProfileReplicaRepository replica;
+
+    public Profile updateDisplayName(UUID userId, String displayName) {
+        primary.updateDisplayName(userId, displayName);
+        return replica.findById(userId);
+    }
+}
+```
+
+## Task
+
+Review the code and propose a patch that makes the user-facing response correct without routing every future profile read to the primary forever.
+
+codex
+A cleaner version of your scenario: users can save a new display name, but the service writes to the primary DB and immediately reads from a replica, so the same request can see a stale row because replica lag is expected.
+
+**Bug (and why it’s a distributed data problem)**
+- Your source of truth is the primary, but the read after write is served by an asynchronous replica.
+- The two calls are a distributed read/write split boundary, not an atomic operation.  
+- As soon as replication delay exists, `replica.findById` can return the old profile even though the write has committed.
+
+**Assumptions and workload shape**
+- Profile reads dominate, writes are user-driven and intermittent.
+- Correctness requirement is at least read-your-writes for the actor making the update.
+- Slightly higher write latency is acceptable; permanent sticky reads to primary are not.
+
+**Smallest correctness-improving patch**
+- Keep replica reads for normal traffic.
+- For this write API only, read back from primary (or write-and-return in one primary call).
+
+```java
+public final class ProfileService {
+    private final ProfilePrimaryRepository primary;
+    private final ProfileReplicaRepository replica;
+
+    public Profile updateDisplayName(UUID userId, String displayName) {
+        primary.updateDisplayName(userId, displayName);
+        return primary.findById(userId); // source of truth read
+    }
+}
+```
+
+If `updateDisplayName` can return the updated row, use that directly and skip the extra read.
+
+**Transaction boundaries**
+- `update` + `read` should stay in a single primary data path, ideally in the same DB transaction/connection scope for read-your-writes semantics.
+- Do not mix write-primary and immediate read-replica in the same user request unless you add explicit replication-coordination logic.
+
+**Consistency and correctness implications**
+- This guarantees the response for this request is correct.
+- It does **not** guarantee zero staleness for other concurrent readers, which is normal with async replicas.
+- You should state this in SLAs (e.g., user-facing write responses are strong; cross-request replica freshness is eventual).
+
+**Idempotency**
+- Retry behavior should be explicit: repeated identical retries (`same userId + same displayName`) are effectively idempotent.
+- Add idempotency handling at API boundary only if clients retry automatically and you need stronger safety against duplicate intent.
+
+**Failure modes**
+- Primary write succeeds but primary read fails: return retryable 5xx vs compensating read from replica (may return stale).
+- Primary is unavailable while replica is up: don’t silently fall back to replica for this path, or you reintroduce stale visibility.
+- Concurrent update races: last write wins unless you use version checks (`updated_at`/version column) if business rules require monotonic updates.
+
+**Operational checks**
+- Track primary write latency for this endpoint.
+- Track replica lag metrics and read-replica staleness diff checks (primary vs replica profile checksums per sampled user).
+- Track count of stale responses for user-facing write calls (must go to zero after this fix).
+
+**Tests**
+- Unit test: verify `updateDisplayName` returns updated value after update.
+- Integration test with replication lag simulation: force stale replica, ensure write path returns fresh primary value.
+- Retry/idempotency test: repeated same request should keep resulting value consistent.
+- Chaos test: primary write succeeds, primary read fails, and service returns deterministic error path.
+tokens used
+3,483
+
+
+exit_code: 0

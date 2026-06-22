@@ -1,0 +1,36 @@
+{
+  "case_id": "good-replica-session-token-routing",
+  "category": "good",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 11,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Strongly aligns with expected session-token pattern: keeps replica-first reads with bounded primary fallback, and explicitly handles replica miss/lag via minVersion. Operational checks are practical and include the right lag/fallback metrics and fault-injection tests. Weakest point is idempotency/retry safety: it calls out duplicate-write risks but does not propose concrete idempotency logic."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 11,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Also preserves the intended design and adds meaningful hardening: input validation, explicit fallback helper, and clearer observability proposals including circuit-breaking/throttle signals. However, idempotency/retry behavior is still only implied, not engineered (e.g., update deduplication). A small risk of over-strict defensive checks (for invalid versions/version-regression) is present but not a major correctness failure."
+  },
+  "winner": "tie",
+  "rationale": "Both answers correctly recommend the DDIA-appropriate solution (replica-first with version-gated fallback to primary) and provide solid Java + operational coverage. Neither demonstrates a clear quality edge in the scored dimensions beyond minor presentation/rigor differences, so they tie."
+}

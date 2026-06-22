@@ -1,0 +1,258 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/kafka-total-ordering-trap/control-response.md -
+
+## stdout
+You are asking for a Java patch review of the consumer, focusing on the ordering assumptions it makes, how to enforce them, and what tests to add for replay, duplicates, and topic migration.
+
+### Ordering guarantee (what the code currently relies on)
+- It assumes events for an account are consumed in strictly increasing sequence order (`sequence` must be next for that account).
+- It also assumes the read (`find`) and write (`save`) sequence is effectively atomic.
+- With Kafka topic migration, both assumptions can break (reordering across partitions, duplicates, concurrent consumers), so updates can be skipped incorrectly.
+
+### Recommended Java patch
+```java
+public final class AccountEventConsumer {
+    private final AccountRepository accounts;
+    private final OutOfOrderSink outOfOrderSink;
+    private static final int CAS_RETRIES = 3;
+
+    public void onEvent(AccountEvent event) {
+        for (int attempt = 0; attempt < CAS_RETRIES; attempt++) {
+            Account account = accounts.findOrCreate(event.accountId());
+            long lastSeq = account.lastSequence();
+
+            if (event.sequence() <= lastSeq) {
+                // replay/duplicate: already applied
+                return;
+            }
+
+            if (event.sequence() != lastSeq + 1) {
+                // hard ordering violation (gap or reordering)
+                outOfOrderSink.publish(event, account.accountId(), lastSeq);
+                return;
+            }
+
+            Account updated = account.apply(event);
+
+            // atomic CAS-style update: only writes if last_sequence is still what we read
+            int rows = accounts.saveIfUnchanged(updated, lastSeq);
+            if (rows == 1) {
+                return; // applied exactly once
+            }
+            // concurrent updater raced; retry read + check once more
+        }
+
+        outOfOrderSink.publishRetryExhausted(event);
+    }
+}
+```
+
+```java
+public interface AccountRepository {
+    Account findOrCreate(String accountId);
+
+    /**
+     * @return 1 if row updated, 0 if optimistic write failed (last_sequence changed)
+     */
+    int saveIfUnchanged(Account account, long expectedLastSequence);
+}
+```
+
+Example SQL for `saveIfUnchanged` (JPA/native/DSL equivalent is fine):
+```sql
+UPDATE account
+SET balance = ?, last_sequence = ?
+WHERE account_id = ? AND last_sequence = ?;
+```
+
+### Why this helps
+- Prevents silent corruption from out-of-order events by routing them to a dead-letter/retry path instead of silently dropping.
+- Ensures idempotence for duplicates/replays (`<= lastSequence`).
+- Makes apply atomic under concurrency (`last_sequence = expectedLastSequence` CAS), preventing race losses.
+
+### Deployment/migration controls to enforce ordering
+- Keep Kafka partitioning strictly by `accountId` on both old and new topics.
+- During migration, do not allow both old/new sources to produce interleaved updates for the same account without dedupe support.
+- Keep one consuming code path until backlog catch-up is complete; only then switch source fully.
+- Persist metrics:
+  - `account.consumer.out_of_order`
+  - `account.consumer.replay_duplicate`
+  - `account.consumer.cas_retry_exhausted`
+
+### Tests to add
+
+1. Replay + duplicate
+- Given `lastSequence=10`, send event `sequence=10` then `sequence=9`; consumer must not call write.
+- State unchanged, call count 0 for `saveIfUnchanged`.
+
+2. In-order and duplicate safety
+- Given `lastSequence=10`, send event `sequence=11` twice.
+- First call updates row once, second call ignored (`<= lastSequence`).
+
+3. Out-of-order/gap during migration
+- Given `lastSequence=10`, send event `sequence=12`.
+- Consumer publishes to `OutOfOrderSink`, does not call write.
+
+4. Concurrent replay safety (CAS path)
+- Two threads deliver competing updates (`11` and `12`) under same account context; only one consistent CAS path succeeds per event.
+- Verify eventual correctness (no duplicate apply, no stale overwrite).
+
+5. Migration replay contract test
+- Reproduce topic failover/replay with duplicate and reordered batches.
+- Assert no balance divergence and final `lastSequence` equals highest contiguous applied sequence.
+- Assert any gap/out-of-order events are captured by the ordered-error sink and do not mutate state.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7c-3286-75c1-b268-78fc21f14cb9
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Control Instructions
+
+Answer the Java coding case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill. Review the code as a general Java backend coding task and provide the patch you would normally recommend.
+
+## Scenario
+
+An account service consumes balance-related events from Kafka and stores the last applied sequence on each account. The team asks for a Java patch after seeing occasional skipped or out-of-order account updates during a topic migration.
+
+## Java Code
+
+```java
+public final class AccountEventConsumer {
+    private final AccountRepository accounts;
+
+    public void onEvent(AccountEvent event) {
+        Account account = accounts.find(event.accountId());
+        if (event.sequence() <= account.lastSequence()) {
+            return;
+        }
+        accounts.save(account.apply(event));
+    }
+}
+```
+
+## Task
+
+Review the consumer and propose a Java-oriented patch. Keep the answer focused on the ordering guarantee the code relies on, how that guarantee should be enforced, and tests for replay, duplicates, and deployment changes.
+
+codex
+You are asking for a Java patch review of the consumer, focusing on the ordering assumptions it makes, how to enforce them, and what tests to add for replay, duplicates, and topic migration.
+
+### Ordering guarantee (what the code currently relies on)
+- It assumes events for an account are consumed in strictly increasing sequence order (`sequence` must be next for that account).
+- It also assumes the read (`find`) and write (`save`) sequence is effectively atomic.
+- With Kafka topic migration, both assumptions can break (reordering across partitions, duplicates, concurrent consumers), so updates can be skipped incorrectly.
+
+### Recommended Java patch
+```java
+public final class AccountEventConsumer {
+    private final AccountRepository accounts;
+    private final OutOfOrderSink outOfOrderSink;
+    private static final int CAS_RETRIES = 3;
+
+    public void onEvent(AccountEvent event) {
+        for (int attempt = 0; attempt < CAS_RETRIES; attempt++) {
+            Account account = accounts.findOrCreate(event.accountId());
+            long lastSeq = account.lastSequence();
+
+            if (event.sequence() <= lastSeq) {
+                // replay/duplicate: already applied
+                return;
+            }
+
+            if (event.sequence() != lastSeq + 1) {
+                // hard ordering violation (gap or reordering)
+                outOfOrderSink.publish(event, account.accountId(), lastSeq);
+                return;
+            }
+
+            Account updated = account.apply(event);
+
+            // atomic CAS-style update: only writes if last_sequence is still what we read
+            int rows = accounts.saveIfUnchanged(updated, lastSeq);
+            if (rows == 1) {
+                return; // applied exactly once
+            }
+            // concurrent updater raced; retry read + check once more
+        }
+
+        outOfOrderSink.publishRetryExhausted(event);
+    }
+}
+```
+
+```java
+public interface AccountRepository {
+    Account findOrCreate(String accountId);
+
+    /**
+     * @return 1 if row updated, 0 if optimistic write failed (last_sequence changed)
+     */
+    int saveIfUnchanged(Account account, long expectedLastSequence);
+}
+```
+
+Example SQL for `saveIfUnchanged` (JPA/native/DSL equivalent is fine):
+```sql
+UPDATE account
+SET balance = ?, last_sequence = ?
+WHERE account_id = ? AND last_sequence = ?;
+```
+
+### Why this helps
+- Prevents silent corruption from out-of-order events by routing them to a dead-letter/retry path instead of silently dropping.
+- Ensures idempotence for duplicates/replays (`<= lastSequence`).
+- Makes apply atomic under concurrency (`last_sequence = expectedLastSequence` CAS), preventing race losses.
+
+### Deployment/migration controls to enforce ordering
+- Keep Kafka partitioning strictly by `accountId` on both old and new topics.
+- During migration, do not allow both old/new sources to produce interleaved updates for the same account without dedupe support.
+- Keep one consuming code path until backlog catch-up is complete; only then switch source fully.
+- Persist metrics:
+  - `account.consumer.out_of_order`
+  - `account.consumer.replay_duplicate`
+  - `account.consumer.cas_retry_exhausted`
+
+### Tests to add
+
+1. Replay + duplicate
+- Given `lastSequence=10`, send event `sequence=10` then `sequence=9`; consumer must not call write.
+- State unchanged, call count 0 for `saveIfUnchanged`.
+
+2. In-order and duplicate safety
+- Given `lastSequence=10`, send event `sequence=11` twice.
+- First call updates row once, second call ignored (`<= lastSequence`).
+
+3. Out-of-order/gap during migration
+- Given `lastSequence=10`, send event `sequence=12`.
+- Consumer publishes to `OutOfOrderSink`, does not call write.
+
+4. Concurrent replay safety (CAS path)
+- Two threads deliver competing updates (`11` and `12`) under same account context; only one consistent CAS path succeeds per event.
+- Verify eventual correctness (no duplicate apply, no stale overwrite).
+
+5. Migration replay contract test
+- Reproduce topic failover/replay with duplicate and reordered batches.
+- Assert no balance divergence and final `lastSequence` equals highest contiguous applied sequence.
+- Assert any gap/out-of-order events are captured by the ordered-error sink and do not mutate state.
+tokens used
+10,105
+
+
+exit_code: 0

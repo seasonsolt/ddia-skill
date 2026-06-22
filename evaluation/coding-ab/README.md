@@ -12,6 +12,8 @@ Use `scripts/render_coding_ab_prompt.py` to generate answer prompts. Do not feed
 the raw case file to the answer model, because raw case files include title,
 case metadata, topic metadata, and judge-only sections such as expected
 reasoning, strong patch signals, weak patch patterns, and scoring notes.
+Use `scripts/run_coding_ab_pilot.py` to run the full suite and archive prompts,
+answers, hidden mappings, judge JSON, and aggregate results.
 
 ## Case Set
 
@@ -41,6 +43,18 @@ The full topic mapping is in [evaluation/coding-ab/coverage-matrix.md](coverage-
 - evaluation/coding-ab/cases/multi-region-last-write-wins-profile.md
 - evaluation/coding-ab/cases/elasticsearch-authorization-trap.md
 - evaluation/coding-ab/cases/kafka-total-ordering-trap.md
+
+## Full Run
+
+The first complete 18-case coding A/B run is archived in
+[`runs/2026-06-22-full-18-case-coding-ab`](runs/2026-06-22-full-18-case-coding-ab).
+It includes generated control and treatment answers, hidden mappings, raw blind
+judge JSON, normalized judge results, per-case summaries, and an aggregate
+README.
+
+The run used `gpt-5.3-codex-spark` with high reasoning effort for both answer
+generation and blind judging. Treatment scored 202/226 versus control at
+151/226, with treatment winning 15 cases, control winning 2, and 1 tie.
 
 ## Limitations
 

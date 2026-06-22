@@ -1,0 +1,341 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/payment-exactly-once-trap/blind-judge-raw.json --output-schema /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/judge-output-schema.json -
+
+## stdout
+{"case_id":"payment-exactly-once-trap","category":"adversarial","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":1,"anti_pattern_resistance":2},"rationale":"Strong end-to-end reasoning and correct framing: separates external gateway side effects from DB state, stores claim/state before gateway call, uses idempotency key, and makes payment completion conditional. Explicitly avoids claiming exact-once. Operational checks and recovery/monitoring suggestions are present. Patch is practical but not fully production-polished (transaction annotation still spans external call and recovery write path is described rather than fully implemented)."},"response_b":{"scores":{"correctness_invariant":1,"source_of_truth_boundary":2,"failure_mode_handling":1,"idempotency_retry_safety":1,"operational_verification":1,"java_patch_quality":1,"anti_pattern_resistance":1},"rationale":"Uses a reasonable lease+attempt design and correctly rejects absolute exactly-once guarantees, but leaves an important control-flow gap: retries can be short-circuited while PROCESSING without a clear forward-recovery step, so completion can stall. Idempotency and attempt matching are present yet not strongly closed (no check of markPaid result). Lacks concrete operational verification artifacts beyond brief textual caveats."},"winner":"A","rationale":"Response A is stronger overall: it is clearer about distributed split-brain limitations, provides more complete state-transition handling and explicit observability/tests, and offers a more directly safe retry path for duplicate invocations."}
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7f-2709-71a2-b2f4-ccfcd152e8a2
+--------
+user
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: payment-exactly-once-trap
+Category: adversarial
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: payment-exactly-once-trap
+
+Case ID: payment-exactly-once-trap
+Category: adversarial
+Language: Java
+Primary DDIA topics: exactly-once semantics, idempotency, retries, external side effects
+
+## Scenario
+
+A payment worker charges a card and then marks the invoice paid. The product manager asks for "exactly once payment" by wrapping the method in a retry annotation because the payment gateway sometimes times out.
+
+## Flawed Java
+
+```java
+public final class PaymentWorker {
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+
+    @Retryable(maxAttempts = 3)
+    public void payInvoice(UUID invoiceId) {
+        Invoice invoice = invoices.find(invoiceId);
+        Charge charge = gateway.charge(invoice.cardToken(), invoice.amountCents());
+        invoices.markPaid(invoiceId, charge.id());
+    }
+}
+```
+
+## Task
+
+Review the code and propose a patch that handles timeouts and duplicate worker execution. Be explicit about what guarantee the patch can and cannot provide.
+
+## Expected DDIA Reasoning
+
+The answer should challenge end-to-end exactly-once claims for an external payment side effect. It should use idempotency keys, durable payment attempt records, state transitions, and recovery logic to make retries safe and observable.
+
+## Strong Patch Signals
+
+- Stores a unique payment attempt or idempotency key before calling the gateway.
+- Uses gateway idempotency support and records ambiguous timeout states for reconciliation.
+- Makes `markPaid` conditional on invoice state and charge identity, with tests for retry after timeout.
+
+## Weak Patch Patterns
+
+- Claims `@Retryable` or a transaction makes the gateway call exactly once.
+- Charges first and records later without handling process crashes or unknown outcomes.
+- Suppresses gateway exceptions and marks the invoice paid without durable evidence.
+
+## Scoring Notes
+
+- Award credit for precise wording such as "effectively once for this invoice when the gateway honors idempotency keys."
+- Penalize answers that promise impossible exactly-once behavior across the database and gateway.
+
+
+## Response A
+
+Your message in idiomatic English: “Can you review this Java payment worker and suggest the smallest patch that safely handles gateway timeouts and duplicate execution, while being clear about what correctness guarantees are possible?”
+
+## 1) Assumptions and workload shape
+- A single invoice can be charged once and should only create one successful upstream charge.
+- Workers may run more than once for the same invoice due to retries (`@Retryable`) and concurrent workers.
+- Gateway calls can timeout after side effects have already happened.
+
+## 2) What is wrong in the current code
+- `gateway.charge(...)` and `invoices.markPaid(...)` are two separate systems with no atomic boundary.
+- A timeout after a successful charge can cause duplicate charging on retry.
+- `@Retryable` retries the whole method, but without idempotency, duplicates are expected.
+- No state machine/claiming guard around concurrent executions, so duplicate workers can race.
+
+This is a distributed data consistency issue because the DB state (“paid”) and payment system side effects (“charge created”) can diverge and be replayed.
+
+## 3) Smallest practical patch
+Make the invoice row a payment state machine and use an idempotency key for the gateway.
+
+### Patch idea (minimal)
+- Add one payment attempt key + status columns (or reuse existing columns):  
+  `paymentRequestId`, `paymentState` (`OPEN`, `CHARGING`, `PAID`), and `gatewayChargeId`.
+- Claim payment in DB before calling the gateway (single state transition).
+- Call gateway with a stable idempotency key.
+- Mark paid only if claim state matches expected values.
+- Only retry on transient gateway/network errors.
+
+```java
+public final class PaymentWorker {
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+
+    @Transactional
+    @Retryable(
+        maxAttempts = 3,
+        retryFor = { PaymentTimeoutException.class, TransientIoException.class },
+        noRetryFor = { IllegalArgumentException.class }
+    )
+    public void payInvoice(UUID invoiceId) {
+        Invoice invoice = invoices.findForUpdate(invoiceId)
+            .orElseThrow(() -> new IllegalArgumentException("Invoice not found"));
+
+        if (invoice.isPaid()) return;
+
+        // Deterministic idempotency key (at least per invoice; can be per attempt token if needed)
+        String idempotencyKey = invoice.getPaymentRequestId() != null
+            ? invoice.getPaymentRequestId()
+            : invoiceId.toString();
+
+        if (invoice.getPaymentRequestId() == null) {
+            boolean claimed = invoices.tryStartPayment(invoiceId, idempotencyKey); // atomic transition OPEN -> CHARGING
+            if (!claimed) {
+                Invoice latest = invoices.get(invoiceId);
+                if (latest.isPaid()) return;
+                throw new RetryableInProgressException(invoiceId);
+            }
+        } else if (invoice.isCharging() && invoice.getGatewayChargeId() != null) {
+            return; // previous successful charge got recorded with same key
+        }
+
+        Charge charge = gateway.charge(
+            invoice.cardToken(),
+            invoice.amountCents(),
+            idempotencyKey
+        );
+
+        boolean marked = invoices.markPaidIfCharging(invoiceId, idempotencyKey, charge.id()); // only from CHARGING+matching key
+        if (!marked) {
+            throw new IllegalStateException("Invoice state changed while charging");
+        }
+    }
+}
+```
+
+Repository method intent:
+- `findForUpdate`: select invoice `FOR UPDATE`.
+- `tryStartPayment`: `UPDATE ... SET state='CHARGING', paymentRequestId=? WHERE id=? AND state='OPEN'`.
+- `markPaidIfCharging`: `UPDATE ... SET state='PAID', gatewayChargeId=? WHERE id=? AND state='CHARGING' AND paymentRequestId=?`.
+
+## 4) Consistency, source of truth, and transaction boundaries
+- Source of truth for invoice outcome: your invoice DB row (`state`, `gatewayChargeId`).
+- Gateway is authoritative for actual money movement and must be queried/reconciled when state is ambiguous.
+- DB transaction can protect claim + read-modify-write of invoice state, but cannot include gateway call; that is the fundamental split-brain point.
+
+## 5) Guarantees this patch provides / does not provide
+- What it can provide:
+  - At-most-once charge attempts on the gateway if the gateway respects idempotency keys.
+  - At-most-once DB-marked payment per invoice under normal retries and concurrent duplicates.
+  - Deterministic handling of duplicate/replayed `payInvoice` calls.
+- What it cannot provide:
+  - Absolute “exactly-once” in a distributed boundary (network + crash + timeout windows).
+  - If gateway does not enforce idempotency, duplicate charges remain possible without extra external reconciliation.
+
+## 6) Failure modes and operational visibility
+- Failure mode: timeout right after charge success, before DB update  
+  → retry reuses same idempotency key; gateway returns existing charge or deduplicates.
+- Failure mode: crash after claim, before charge  
+  → invoice remains `CHARGING`; needs recovery path.
+- Failure mode: stale `CHARGING` lock for long time  
+  → detect and alert on aged `CHARGING` rows.
+
+Operational signals:
+- `payment_claim_conflict_total`
+- `gateway_charge_retries_total` by cause
+- `gateway_charge_idempotent_reused_total`
+- `invoice_stuck_charging_count` (age > threshold)
+- `markPaid_if_charging_miss_total` (state divergence indicator)
+
+## 7) Tests to validate
+- Unit/integration: duplicate retry after timeout does not create second successful charge (`gateway` called once, or twice-but-deduped by key).
+- Concurrent worker test: two threads call `payInvoice` for same invoice; only one transitions to `PAID`.
+- Timeout-before-mark test: simulate timeout after successful gateway call; retry should not create extra charge and eventually marks paid.
+- Recovery test: simulate crash after claim but before charge; reconciliation/monitoring surfaces stale `CHARGING` and recovers deterministically.
+
+If you want, I can provide a compact “drop-in” version tailored exactly to your current `Invoice` fields and repository API signatures.
+
+## Response B
+
+Your request in natural English: *Please review this Java payment worker code and propose a patch that safely handles timeouts and duplicate executions, and clearly state what guarantees are and are not provided.*
+
+### Review findings
+- `@Retryable` on the whole method can retry after `gateway.charge(...)` returns/throws, so a timeout can cause double charging and/or duplicate `markPaid`.
+- There is no coordination between workers, so two workers can charge the same invoice concurrently.
+- `markPaid(...)` is not idempotent with respect to retries or duplicate calls.
+
+### Recommended patch (core idea)
+Use a two-step worker lease + stable idempotency key:
+
+1. Atomically claim the invoice in DB before calling the gateway (PROCESSING lease).
+2. Use that same stored `attemptId` as gateway idempotency key.
+3. Make payment completion idempotent and only allow completion when lease matches current attempt.
+4. Never retry before an explicit lease/attempt is visible in DB.
+
+```java
+public final class PaymentWorker {
+    private static final Duration PAYMENT_LEASE_TTL = Duration.ofMinutes(5);
+
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+    private final Clock clock;
+
+    @Retryable(
+        maxAttempts = 3,
+        retryFor = {GatewayTimeoutException.class, GatewayTransientIOException.class},
+        noRetryFor = {InvoiceAlreadyPaidException.class}
+    )
+    public void payInvoice(UUID invoiceId) {
+        PaymentReservation reservation = invoices.reserveForPayment(invoiceId, PAYMENT_LEASE_TTL, clock.instant());
+
+        if (reservation.status() == PaymentReservation.Status.PAID) {
+            return;
+        }
+        if (reservation.status() == PaymentReservation.Status.HELD_BY_OTHER_WORKER) {
+            return;
+        }
+
+        UUID attemptId = reservation.attemptId();
+        Invoice invoice = reservation.invoice();
+
+        Charge charge;
+        try {
+            charge = gateway.charge(new ChargeRequest(
+                invoice.cardToken(),
+                invoice.amountCents(),
+                attemptId // stable idempotency key persisted by reservation
+            ));
+        } catch (GatewayTimeoutException | GatewayTransientIOException e) {
+            invoices.markTransientFailure(invoiceId, attemptId, e.getMessage());
+            throw e;
+        }
+
+        // Idempotent completion: safe if retried
+        invoices.markPaidIfCurrentAttempt(invoiceId, attemptId, charge.id());
+    }
+}
+```
+
+```java
+public interface InvoiceRepository {
+    PaymentReservation reserveForPayment(UUID invoiceId, Duration leaseTtl, Instant now);
+
+    // Atomically:
+    // - if PAID -> return Paid
+    // - if PROCESSING and lease not expired -> return HeldByOtherWorker
+    // - else set status=PROCESSING, attemptId=existingOrNew, leaseUntil=now+leaseTtl
+    // then return reservation(invoice, attemptId, state)
+
+    boolean markPaidIfCurrentAttempt(UUID invoiceId, UUID attemptId, String chargeId);
+    // SQL idea:
+    // UPDATE invoices
+    // SET status='PAID', charge_id=:chargeId, paid_at=now(), error=null
+    // WHERE id=:invoiceId AND status='PROCESSING' AND payment_attempt_id=:attemptId
+
+    void markTransientFailure(UUID invoiceId, UUID attemptId, String reason);
+}
+```
+
+### What this patch can guarantee
+- Prevents duplicate in-flight workers for the same invoice via DB lease/lock.
+- Prevents duplicate charges if `PaymentGateway` honors the idempotency key.
+- Makes `markPaid` idempotent for the same attempt.
+- On timeout retries, the same attempt key is reused, so repeated retries do not usually duplicate charging.
+
+### What this patch cannot guarantee
+- **Cannot guarantee exactly once** if the gateway does not support idempotent requests.
+- Cannot fully guarantee completion if the process crashes after external charge succeeds but before DB updates; you still need periodic reconciliation for that edge.
+- A very long network partition plus short lease TTL could allow lease takeover; final correctness then depends on gateway idempotency and repository checks.
+
+codex
+{"case_id":"payment-exactly-once-trap","category":"adversarial","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":1,"anti_pattern_resistance":2},"rationale":"Strong end-to-end reasoning and correct framing: separates external gateway side effects from DB state, stores claim/state before gateway call, uses idempotency key, and makes payment completion conditional. Explicitly avoids claiming exact-once. Operational checks and recovery/monitoring suggestions are present. Patch is practical but not fully production-polished (transaction annotation still spans external call and recovery write path is described rather than fully implemented)."},"response_b":{"scores":{"correctness_invariant":1,"source_of_truth_boundary":2,"failure_mode_handling":1,"idempotency_retry_safety":1,"operational_verification":1,"java_patch_quality":1,"anti_pattern_resistance":1},"rationale":"Uses a reasonable lease+attempt design and correctly rejects absolute exactly-once guarantees, but leaves an important control-flow gap: retries can be short-circuited while PROCESSING without a clear forward-recovery step, so completion can stall. Idempotency and attempt matching are present yet not strongly closed (no check of markPaid result). Lacks concrete operational verification artifacts beyond brief textual caveats."},"winner":"A","rationale":"Response A is stronger overall: it is clearer about distributed split-brain limitations, provides more complete state-transition handling and explicit observability/tests, and offers a more directly safe retry path for duplicate invocations."}
+tokens used
+17,369
+
+
+exit_code: 0

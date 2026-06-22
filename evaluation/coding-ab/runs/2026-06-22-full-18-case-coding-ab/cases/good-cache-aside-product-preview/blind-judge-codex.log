@@ -1,0 +1,332 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/good-cache-aside-product-preview/blind-judge-raw.json --output-schema /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/judge-output-schema.json -
+
+## stdout
+{"case_id":"good-cache-aside-product-preview","category":"good","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Strong: keeps Postgres as source of truth, treats Redis as non-authoritative cache, fails open on Redis/JSON failures, handles missing product safely, and discusses TTL/staleness/invalidation expectations. Operational checks are relevant to preview staleness and cache health, and failure modes are concretely covered."},"response_b":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":1,"anti_pattern_resistance":null},"rationale":"Generally good and practical, with defensive coding and observability, but the negative-cache branch is ineffective because the marker is not used to short-circuit DB fallback (`MISSING_MARKER` still leads to DB lookup), so one stated issue remains unresolved. Some added structure is clean, but this weakens patch completeness."},"winner":"A","rationale":"Response A is stronger because it aligns more directly with DDIA requirements for derived-data caching correctness and fail-open behavior while avoiding unnecessary cache-dependence and preserving clear source-of-truth boundaries."}
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef79-2007-7e90-8524-9c30b111c92c
+--------
+user
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: good-cache-aside-product-preview
+Category: good
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: good-cache-aside-product-preview
+
+Case ID: good-cache-aside-product-preview
+Category: good
+Language: Java
+Primary DDIA topics: read paths, cached previews, derived data safety
+
+## Scenario
+
+A product page service uses Redis to speed up product previews, but checkout and pricing still read from Postgres. The team asks whether this cache usage should be rejected or patched.
+
+## Flawed Java
+
+```java
+public final class ProductPreviewService {
+    private final RedisClient redis;
+    private final ProductRepository products;
+
+    public ProductPreview preview(String sku) {
+        String cached = redis.get("product-preview:" + sku);
+        if (cached != null) {
+            return ProductPreview.fromJson(cached);
+        }
+
+        Product product = products.findForPreview(sku);
+        ProductPreview preview = ProductPreview.from(product.id(), product.name(), product.thumbnailUrl());
+        redis.setex("product-preview:" + sku, 300, preview.toJson());
+        return preview;
+    }
+}
+```
+
+## Task
+
+Review the code, assess whether a Java-oriented patch is needed, and justify the operational checks that would protect this design.
+
+## Expected DDIA Reasoning
+
+The answer should not reject all caching. It should identify Redis as derived preview data, keep business decisions such as checkout price and availability outside this cache, and recommend bounded TTL, invalidation, and metrics for stale previews.
+
+## Strong Patch Signals
+
+- States that this is acceptable if preview data is non-authoritative.
+- Keeps checkout, payment, authorization, and inventory decisions on durable sources.
+- Adds stale-cache tests, invalidation tests, and cache-hit/stale-age metrics.
+
+## Weak Patch Patterns
+
+- Removes Redis because "caches are unsafe" without distinguishing preview data from business invariants.
+- Moves checkout price or inventory decisions into the preview cache.
+- Adds distributed locks around preview reads.
+
+## Scoring Notes
+
+- Award high scores for avoiding false positives and preserving the derived-data boundary.
+- Penalize answers that over-engineer a read-only preview path.
+
+
+## Response A
+
+You asked for a more natural phrasing: “Please review this Java cache-aside preview service, call out the distributed-data risks, and suggest the smallest practical patch needed for correctness, including assumptions, consistency guarantees, transaction boundaries, idempotency, failure modes, observability, and tests.”
+
+1. Assumptions and workload shape  
+- Primary workload is read-heavy (`preview(sku)`) with lower write frequency.  
+- `ProductRepository` (Postgres) is intended to be the source of truth.  
+- Cache is a latency optimization, not a source of correctness.  
+- A small staleness window (e.g., up to TTL seconds) is acceptable for product preview data.
+
+2. Key issues (findings)  
+1) Hard dependency on Redis: if `redis.get` or `redis.setex` throws, the request can fail even when Postgres is healthy. This is an availability and distributed-dependency failure.  
+2) Cache parse/serialization risk: corrupt/partial JSON in Redis causes runtime failure (`fromJson`) instead of a safe fallback.  
+3) Missing-product path is unsafe: `products.findForPreview(sku)` may return null and the code dereferences it.  
+4) Incoherence by design: cache and DB can diverge until TTL expires; acceptable only if explicitly tolerated.
+
+3. Recommendation and smallest Java patch  
+- Make cache non-authoritative and fail-open to DB on any cache problem.  
+- Add bounded fallback path and safe parsing.  
+- Handle “product not found” explicitly before constructing preview.  
+- Keep cache writes best-effort so DB reads still return.
+
+Minimal patch idea:
+
+```java
+public ProductPreview preview(String sku) {
+    String key = "product-preview:" + sku;
+
+    try {
+        String cached = redis.get(key);
+        if (cached != null) {
+            try {
+                return ProductPreview.fromJson(cached);
+            } catch (Exception parseEx) {
+                // metrics.increment("preview.cache.parse_error");
+            }
+        }
+    } catch (Exception redisEx) {
+        // metrics.increment("preview.cache.get_error");
+        // continue to DB on cache failures
+    }
+
+    Product product = products.findForPreview(sku);
+    if (product == null) {
+        return null; // or throw domain-specific NotFound
+    }
+
+    ProductPreview preview = ProductPreview.from(
+        product.id(),
+        product.name(),
+        product.thumbnailUrl()
+    );
+
+    try {
+        redis.setex(key, 300, preview.toJson());
+    } catch (Exception redisEx) {
+        // metrics.increment("preview.cache.set_error");
+    }
+
+    return preview;
+}
+```
+
+4. Source of truth, consistency guarantees, transaction boundaries, idempotency  
+- Source of truth: Postgres only. Redis is derived cache.  
+- Consistency: at-most staleness = TTL (5 min unless changed), not strong/linearizable across stores.  
+- Transaction boundaries: no distributed transaction exists between Postgres and Redis; cannot guarantee atomic cross-system read-write consistency.  
+- Idempotency: repeated cache writes (`setex` for same key/value) are idempotent; no correctness issue if retried.  
+- If stronger freshness is needed, set shorter TTL or wire write-path invalidation/refresh in the product update flow.
+
+5. Failure modes now mitigated by patch  
+- Redis outage/timeout: no total failure, service degrades to DB read.  
+- Cache corruption: bad JSON no longer crashes the preview path.  
+- Missing SKU: avoids null dereference and can return explicit not-found behavior.  
+- Partial redis failures no longer break critical path.
+
+6. Operational visibility to protect this design  
+- Track counters/gauges: cache hits, misses, get errors, parse errors, set errors, db fallback count, not-found count, latency by path.  
+- Add alert if `cache.get_error + cache.set_error` exceeds a small error budget.  
+- Alert on stale-hit ratio if you can detect preview-content freshness drift by adding a version/timestamp field in payload and checking it.  
+- Watch Redis eviction/TTL churn and key cardinality for memory pressure.
+
+7. Tests/experiments  
+- Cache unavailable test: force Redis connect/read failure and verify DB path still returns preview.  
+- Corrupt cache JSON test: write invalid payload and verify graceful DB fallback.  
+- Missing product test: repository returns null and service returns expected not-found behavior.  
+- Concurrency hot-key test: many misses on same SKU should remain correct and bounded in DB load.  
+- Chaos fault simulation: Redis latency spike + timeout injection to confirm fail-open behavior and alerting.
+
+## Response B
+
+More natural version:  
+“Please review this Java code and decide whether this Redis cache usage should be rejected or patched. If patched, provide the Java patch and the operational checks that make this design safe.”
+
+1. Recommended decision: patch, do not reject.
+
+2. Main issues to address:
+1. High: `products.findForPreview(sku)` may return `null`, causing `NullPointerException` when dereferencing `product.id()`.
+2. High: Redis or JSON errors can bring preview lookup down; failures are uncaught.
+3. Medium: no handling for cache misses on non-existent SKUs, so repeated misses create repeated DB reads.
+4. Medium: no cache invalidation on product updates, so previews can stay stale up to 5 minutes (or longer under read failures).
+5. Low: hardcoded TTL and key format in code, and no observability.
+
+3. Java patch I would recommend:
+
+```java
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.Objects;
+
+public final class ProductPreviewService {
+    private static final Logger LOG = LoggerFactory.getLogger(ProductPreviewService.class);
+
+    private static final String CACHE_PREFIX = "product-preview:";
+    private static final String MISSING_MARKER = "__missing__";
+    private static final int PREVIEW_TTL_SECONDS = 300;
+    private static final int MISSING_TTL_SECONDS = 30;
+
+    private final RedisClient redis;
+    private final ProductRepository products;
+
+    public ProductPreviewService(RedisClient redis, ProductRepository products) {
+        this.redis = Objects.requireNonNull(redis, "redis");
+        this.products = Objects.requireNonNull(products, "products");
+    }
+
+    public ProductPreview preview(String sku) {
+        if (sku == null || sku.isBlank()) {
+            throw new IllegalArgumentException("sku must not be null/blank");
+        }
+
+        String key = CACHE_PREFIX + sku;
+
+        ProductPreview cached = getFromCache(key, sku);
+        if (cached != null) {
+            return cached;
+        }
+
+        Product product = products.findForPreview(sku);
+        if (product == null) {
+            cacheMissingProduct(key);
+            return null;
+        }
+
+        ProductPreview preview = ProductPreview.from(product.id(), product.name(), product.thumbnailUrl());
+        cachePreview(key, preview);
+        return preview;
+    }
+
+    private ProductPreview getFromCache(String key, String sku) {
+        try {
+            String cached = redis.get(key);
+            if (cached == null || MISSING_MARKER.equals(cached)) {
+                return null;
+            }
+            try {
+                return ProductPreview.fromJson(cached);
+            } catch (RuntimeException e) {
+                LOG.warn("Invalid cached ProductPreview for key {}", key, e);
+                return null;
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Redis read failed for key {} (sku={}), fallback to DB", key, sku, e);
+            return null;
+        }
+    }
+
+    private void cachePreview(String key, ProductPreview preview) {
+        try {
+            redis.setex(key, PREVIEW_TTL_SECONDS, preview.toJson());
+        } catch (RuntimeException e) {
+            LOG.warn("Redis write failed for key {}", key, e);
+        }
+    }
+
+    private void cacheMissingProduct(String key) {
+        try {
+            redis.setex(key, MISSING_TTL_SECONDS, MISSING_MARKER);
+        } catch (RuntimeException e) {
+            LOG.warn("Failed to cache missing-product marker for key {}", key, e);
+        }
+    }
+}
+```
+
+4. Operational checks to protect this design:
+1. Cache hit rate, miss rate, and redis-fallback-to-DB count (should trend and alert on spikes).
+2. Redis error rate and p95/p99 latency; if error budget is exceeded, verify graceful fallback behavior.
+3. DB read QPS and query latency by preview endpoint, especially during cache outages or invalidation waves.
+4. JSON parse failure rate from cache payloads (indicates serializer/versioning drift or corruption).
+5. Negative-cache marker hit ratio (should stay reasonable; spikes can reveal scanning/fraud or bad SKUs).
+6. Cache memory + key cardinality alerts (`product-preview:*` growth) and TTL distribution.
+7. Product update/delete flow must emit cache invalidation (`DEL product-preview:{sku}`) so previews do not stay stale after mutations.
+8. Synthetic checks on a small canary set comparing preview fields with DB for staleness and schema compatibility.
+
+codex
+{"case_id":"good-cache-aside-product-preview","category":"good","response_a":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":2,"anti_pattern_resistance":null},"rationale":"Strong: keeps Postgres as source of truth, treats Redis as non-authoritative cache, fails open on Redis/JSON failures, handles missing product safely, and discusses TTL/staleness/invalidation expectations. Operational checks are relevant to preview staleness and cache health, and failure modes are concretely covered."},"response_b":{"scores":{"correctness_invariant":2,"source_of_truth_boundary":2,"failure_mode_handling":2,"idempotency_retry_safety":2,"operational_verification":2,"java_patch_quality":1,"anti_pattern_resistance":null},"rationale":"Generally good and practical, with defensive coding and observability, but the negative-cache branch is ineffective because the marker is not used to short-circuit DB fallback (`MISSING_MARKER` still leads to DB lookup), so one stated issue remains unresolved. Some added structure is clean, but this weakens patch completeness."},"winner":"A","rationale":"Response A is stronger because it aligns more directly with DDIA requirements for derived-data caching correctness and fail-open behavior while avoiding unnecessary cache-dependence and preserving clear source-of-truth boundaries."}
+tokens used
+14,859
+
+
+exit_code: 0

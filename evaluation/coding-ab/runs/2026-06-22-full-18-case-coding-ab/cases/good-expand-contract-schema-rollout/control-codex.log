@@ -1,0 +1,174 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/good-expand-contract-schema-rollout/control-response.md -
+
+## stdout
+You are asking whether, during a mixed-version rollout, the writer should stop populating `full_name`, and what Java patch and operational checks are needed.
+
+Recommended approach: **keep writing `full_name` for now**. During coexistence, you need compatibility with older readers and any other consumers that still expect `full_name`.
+
+A practical Java patch is to keep dual-write but make reads robust when data is temporarily inconsistent:
+
+```java
+public final class UserWriter {
+    private final JdbcTemplate jdbc;
+    private static final String SQL =
+        "UPDATE users SET full_name = ?, given_name = ?, family_name = ? WHERE id = ?";
+
+    public void updateName(UUID userId, String fullName) {
+        NameParts parts = NameParts.parse(fullName);
+        String given = parts != null ? parts.givenName() : null;
+        String family = parts != null ? parts.familyName() : null;
+
+        jdbc.update(SQL, fullName, given, family, userId);
+    }
+}
+
+public final class UserReader {
+    public UserDto map(ResultSet rs) throws SQLException {
+        String fullName = rs.getString("full_name");
+        String givenName = rs.getString("given_name");
+        String familyName = rs.getString("family_name");
+
+        if ((fullName == null || fullName.isBlank()) &&
+            (givenName != null || familyName != null)) {
+            fullName = ((givenName == null ? "" : givenName) + " " +
+                        (familyName == null ? "" : familyName)).trim();
+        }
+
+        return new UserDto(fullName, givenName, familyName);
+    }
+}
+```
+
+Why this is safer:
+
+- `given_name`/`family_name` reads are now tolerant of rows that still only have `full_name`.
+- Writer stays backward compatible during rollout (old and new versions can run together).
+- You avoid sudden breakage from parser edge cases (e.g., odd name formats) in older/newer reads.
+
+Operational checks to protect rollout:
+
+1. Validate dual-write coverage: metric for percentage of rows with non-null `full_name` and non-null `given_name`/`family_name` after each deployment.
+2. Data consistency check: compare `full_name` vs reconstructed `given_name + family_name` for anomalies; allow explicit expected mismatch exceptions where needed.
+3. Deployment guardrail: keep `full_name` writes until can confirm all active readers support split names and legacy traffic is drained.
+4. Incident fallback: if parsing issues appear, temporarily accept parser output failure mode by storing nullable split fields and relying on `full_name`.
+5. After stabilization window, remove `full_name` writes, then eventually remove `full_name` reads/column in a later migration step.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef79-4d38-7151-83b8-13d4138eb7dd
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Control Instructions
+
+Answer the Java coding case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill. Review the code as a general Java backend coding task and provide the patch you would normally recommend.
+
+## Scenario
+
+The team is rolling out a change from one `full_name` field to separate `given_name` and `family_name` fields. For a short period, old and new application versions will run together. They ask whether the writer should stop filling the old field now that new code can read the separate fields.
+
+## Java Code
+
+```java
+public final class UserWriter {
+    private final JdbcTemplate jdbc;
+
+    public void updateName(UUID userId, String fullName) {
+        NameParts parts = NameParts.parse(fullName);
+        jdbc.update(
+            "UPDATE users SET full_name = ?, given_name = ?, family_name = ? WHERE id = ?",
+            fullName,
+            parts.givenName(),
+            parts.familyName(),
+            userId
+        );
+    }
+}
+
+public final class UserReader {
+    public UserDto map(ResultSet rs) throws SQLException {
+        String fullName = rs.getString("full_name");
+        String givenName = rs.getString("given_name");
+        String familyName = rs.getString("family_name");
+        return new UserDto(fullName, givenName, familyName);
+    }
+}
+```
+
+## Task
+
+Review the code, assess whether a Java-oriented patch is needed, and justify the operational checks that would protect this design.
+
+codex
+You are asking whether, during a mixed-version rollout, the writer should stop populating `full_name`, and what Java patch and operational checks are needed.
+
+Recommended approach: **keep writing `full_name` for now**. During coexistence, you need compatibility with older readers and any other consumers that still expect `full_name`.
+
+A practical Java patch is to keep dual-write but make reads robust when data is temporarily inconsistent:
+
+```java
+public final class UserWriter {
+    private final JdbcTemplate jdbc;
+    private static final String SQL =
+        "UPDATE users SET full_name = ?, given_name = ?, family_name = ? WHERE id = ?";
+
+    public void updateName(UUID userId, String fullName) {
+        NameParts parts = NameParts.parse(fullName);
+        String given = parts != null ? parts.givenName() : null;
+        String family = parts != null ? parts.familyName() : null;
+
+        jdbc.update(SQL, fullName, given, family, userId);
+    }
+}
+
+public final class UserReader {
+    public UserDto map(ResultSet rs) throws SQLException {
+        String fullName = rs.getString("full_name");
+        String givenName = rs.getString("given_name");
+        String familyName = rs.getString("family_name");
+
+        if ((fullName == null || fullName.isBlank()) &&
+            (givenName != null || familyName != null)) {
+            fullName = ((givenName == null ? "" : givenName) + " " +
+                        (familyName == null ? "" : familyName)).trim();
+        }
+
+        return new UserDto(fullName, givenName, familyName);
+    }
+}
+```
+
+Why this is safer:
+
+- `given_name`/`family_name` reads are now tolerant of rows that still only have `full_name`.
+- Writer stays backward compatible during rollout (old and new versions can run together).
+- You avoid sudden breakage from parser edge cases (e.g., odd name formats) in older/newer reads.
+
+Operational checks to protect rollout:
+
+1. Validate dual-write coverage: metric for percentage of rows with non-null `full_name` and non-null `given_name`/`family_name` after each deployment.
+2. Data consistency check: compare `full_name` vs reconstructed `given_name + family_name` for anomalies; allow explicit expected mismatch exceptions where needed.
+3. Deployment guardrail: keep `full_name` writes until can confirm all active readers support split names and legacy traffic is drained.
+4. Incident fallback: if parsing issues appear, temporarily accept parser output failure mode by storing nullable split fields and relying on `full_name`.
+5. After stabilization window, remove `full_name` writes, then eventually remove `full_name` reads/column in a later migration step.
+tokens used
+9,227
+
+
+exit_code: 0

@@ -1,0 +1,20 @@
+{
+  "case_id": "good-expand-contract-schema-rollout",
+  "category": "good",
+  "mapping": {
+    "A": "control",
+    "B": "treatment"
+  },
+  "control_total": 9,
+  "treatment_total": 10,
+  "denominator": 12,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 1,
+  "normalized_lift": 0.08333333333333337,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Keeps `full_name` dual-write and adds fallback reads, which is a safe compatibility move, and includes useful rollout metrics/checks. It is weaker on mixed-version correctness guarantees because it does not clearly define backfill/old-reader retirement or rollback/contract preconditions, and idempotency concerns around parsing normalization are only partially addressed.",
+  "treatment_rationale": "Also keeps compatibility via dual-write and reader reconstruction and adds broader operational guardrails, including version-aware rollout gating, mixed-writer/rollback and parser edge-case discussions, and concrete verification tests. It is still limited by not explicitly adding a full backfill plan, and idempotency is discussed conceptually more than enforced in code, but overall reasoning is broader and better aligned with mixed-version safety.",
+  "judge_rationale": "Both responses recognize dual-write is required during rollout; Response B is stronger on failure-mode analysis and operational/runbook detail, including recovery and rollout checks, while still preserving the same Java safety direction. The only notable gap is explicit backfill planning, but B handles operational risk more comprehensively."
+}

@@ -1,0 +1,375 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/elasticsearch-authorization-trap/treatment-response.md -
+
+## stdout
+You are asking for a DDIA-style review of this Java permission check, focusing on why permissions can be wrong after updates, how to handle ambiguous lookups, and the smallest practical patch to improve correctness.
+
+**Assumptions and workload shape**
+1. Reads are frequent and latency-sensitive, while permission changes are less frequent.
+2. `document_permissions` is queried for fast reads and is either a search index, cache, or replica-like derived store.
+3. Read-after-write correctness matters: after a grant/revoke, decisions should reflect current permissions as soon as practical for the service.
+4. A strict policy is expected: an access decision should never be positively granted on a stale or ambiguous lookup.
+
+**Recommendation**
+1. Treat the search read as a cache, not the source of truth.
+2. Add an authoritative path (`PermissionRepository`) for:
+   - missing index rows,
+   - ambiguous results,
+   - malformed index rows,
+   - index query/parse errors,
+   - optional stale-version detection.
+3. Keep index checks narrow and non-authoritative unless confidence is high.
+
+**Minimal Java-oriented patch (smallest correctness-improving change)**
+
+```java
+public final class DocumentAccessService {
+    private final SearchClient search;
+    private final PermissionRepository permissionRepository; // authoritative store
+
+    public boolean canView(UUID userId, UUID documentId) {
+        final SearchQueryResult result;
+        try {
+            // Replace single-key get with a bounded query so we can detect ambiguity.
+            result = search.query("document_permissions")
+                           .mustEq("document_id", documentId.toString())
+                           .limit(2)
+                           .execute();
+        } catch (RuntimeException e) {
+            // Failure safety: do not trust index on read error
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        if (result == null || result.totalHits() == 0) {
+            // Missing entry in derived store: fallback to truth
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        if (result.totalHits() != 1) {
+            // Ambiguous lookup (duplicate/misaligned docs): deny fast path and verify source of truth
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        DocumentPermissionIndexRecord record = result.first();
+
+        // Optional freshness guard if you store a monotonic version or updatedAt in both systems:
+        // if (record.version() < permissionRepository.currentVersion(documentId)) fallback...
+        // This closes the read-after-write gap after permission changes.
+
+        return record.allowedUserIds() != null
+            && record.allowedUserIds().contains(userId.toString());
+    }
+}
+```
+
+If your existing `SearchClient` does not support query+count, keep `get(...)` and still add:
+- null-checks,
+- catch-and-fallback,
+- fallback on malformed or empty payload,
+but note that ambiguity detection will be weaker without query/count support.
+
+**Transaction boundaries**
+1. The write path must be explicit: persist permission changes first in the authoritative DB.
+2. Replicate to index asynchronously via an outbox/event stream or CDC worker.
+3. Do not assume atomicity between DB and index unless you implement distributed transactions (usually unnecessary if read fallback exists).
+4. This patch shifts correctness dependence to the DB read path only when needed.
+
+**Source of truth**
+1. Define DB as definitive for both grants and revokes.
+2. Search index remains an optimization path (speed), not an authority.
+3. Any positive allow decision should only be made from a single, validated snapshot or the source-of-truth fallback.
+
+**Consistency and correctness implications**
+1. Immediate consistency between DB and index is not guaranteed without stronger coupling; this patch avoids relying on that for critical decisions.
+2. The patch eliminates one major class of false permits due to ambiguous/missing/stale index state.
+3. Remaining window: if index returns one matching row while stale and `version`/timestamp guard is not implemented, false decisions remain possible. Add version metadata to close this.
+4. Do not overstate guarantees: this is correctness-improving, not linearizable across stores.
+
+**Idempotency**
+1. `canView` is now idempotent and side-effect free.
+2. Repeated calls under the same underlying state should return the same result.
+3. For write-side changes, make index update events idempotent (event id + upsert-by-document-id) to reduce duplicate/conflicting index states that create ambiguity.
+
+**Failure modes**
+1. Index replication lag or reorder causes stale allow/deny on index-only checks (fixed by fallback).
+2. Duplicate index documents for same `documentId` cause ambiguous matches (detected, fallback to DB).
+3. Empty / corrupted snapshot causes false negatives/false positives; fallback covers both.
+4. Search outage causes temporary fallback load on DB and possible latency increase.
+
+**Operational visibility**
+1. Add counters:
+   - `doc_access_index_miss`
+   - `doc_access_index_ambiguous`
+   - `doc_access_index_error`
+   - `doc_access_fallback_to_db`
+2. Track p99/p50 latency for:
+   - normal index path,
+   - fallback path.
+3. Alert on surge in fallback/ambiguity rate after deploy.
+4. Add sampled parity check job: compare `canView` from index path vs DB every few minutes and alert on drift.
+
+**Tests/experiments**
+1. Unit tests:
+   - search returns null -> DB decision path used.
+   - search throws -> DB decision path used.
+   - 0 hits, >1 hit, malformed payload -> DB fallback.
+   - success hit with allowed and denied cases.
+2. Integration test:
+   - grant/revoke in DB then read immediately before/after index refresh.
+   - verify no false allow when revoked if fallback is triggered by stale detection/version.
+3. Chaos/operational tests:
+   - partial index lag,
+   - duplicate docs in index,
+   - index node restart.
+4. Production canary:
+   - dual-write-read audit sampling to detect divergence between index-derived and DB-derived decisions by document/user pair.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef78-7f98-7ad1-be89-ad5faf38e754
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+A document access service uses a fast permission lookup before returning documents. Operators have seen occasional incorrect access decisions shortly after permission changes, and the team asks for a Java patch before a larger rollout.
+
+## Java Code
+
+```java
+public final class DocumentAccessService {
+    private final SearchClient search;
+
+    public boolean canView(UUID userId, UUID documentId) {
+        SearchHit hit = search.get("document_permissions", documentId.toString());
+        return hit.allowedUserIds().contains(userId.toString());
+    }
+}
+```
+
+## Task
+
+Review the access check and propose a Java-oriented patch. Keep the answer focused on correctness during permission changes, ambiguous lookup results, and tests or metrics that would catch stale access decisions.
+
+codex
+You are asking for a DDIA-style review of this Java permission check, focusing on why permissions can be wrong after updates, how to handle ambiguous lookups, and the smallest practical patch to improve correctness.
+
+**Assumptions and workload shape**
+1. Reads are frequent and latency-sensitive, while permission changes are less frequent.
+2. `document_permissions` is queried for fast reads and is either a search index, cache, or replica-like derived store.
+3. Read-after-write correctness matters: after a grant/revoke, decisions should reflect current permissions as soon as practical for the service.
+4. A strict policy is expected: an access decision should never be positively granted on a stale or ambiguous lookup.
+
+**Recommendation**
+1. Treat the search read as a cache, not the source of truth.
+2. Add an authoritative path (`PermissionRepository`) for:
+   - missing index rows,
+   - ambiguous results,
+   - malformed index rows,
+   - index query/parse errors,
+   - optional stale-version detection.
+3. Keep index checks narrow and non-authoritative unless confidence is high.
+
+**Minimal Java-oriented patch (smallest correctness-improving change)**
+
+```java
+public final class DocumentAccessService {
+    private final SearchClient search;
+    private final PermissionRepository permissionRepository; // authoritative store
+
+    public boolean canView(UUID userId, UUID documentId) {
+        final SearchQueryResult result;
+        try {
+            // Replace single-key get with a bounded query so we can detect ambiguity.
+            result = search.query("document_permissions")
+                           .mustEq("document_id", documentId.toString())
+                           .limit(2)
+                           .execute();
+        } catch (RuntimeException e) {
+            // Failure safety: do not trust index on read error
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        if (result == null || result.totalHits() == 0) {
+            // Missing entry in derived store: fallback to truth
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        if (result.totalHits() != 1) {
+            // Ambiguous lookup (duplicate/misaligned docs): deny fast path and verify source of truth
+            return permissionRepository.canView(userId, documentId);
+        }
+
+        DocumentPermissionIndexRecord record = result.first();
+
+        // Optional freshness guard if you store a monotonic version or updatedAt in both systems:
+        // if (record.version() < permissionRepository.currentVersion(documentId)) fallback...
+        // This closes the read-after-write gap after permission changes.
+
+        return record.allowedUserIds() != null
+            && record.allowedUserIds().contains(userId.toString());
+    }
+}
+```
+
+If your existing `SearchClient` does not support query+count, keep `get(...)` and still add:
+- null-checks,
+- catch-and-fallback,
+- fallback on malformed or empty payload,
+but note that ambiguity detection will be weaker without query/count support.
+
+**Transaction boundaries**
+1. The write path must be explicit: persist permission changes first in the authoritative DB.
+2. Replicate to index asynchronously via an outbox/event stream or CDC worker.
+3. Do not assume atomicity between DB and index unless you implement distributed transactions (usually unnecessary if read fallback exists).
+4. This patch shifts correctness dependence to the DB read path only when needed.
+
+**Source of truth**
+1. Define DB as definitive for both grants and revokes.
+2. Search index remains an optimization path (speed), not an authority.
+3. Any positive allow decision should only be made from a single, validated snapshot or the source-of-truth fallback.
+
+**Consistency and correctness implications**
+1. Immediate consistency between DB and index is not guaranteed without stronger coupling; this patch avoids relying on that for critical decisions.
+2. The patch eliminates one major class of false permits due to ambiguous/missing/stale index state.
+3. Remaining window: if index returns one matching row while stale and `version`/timestamp guard is not implemented, false decisions remain possible. Add version metadata to close this.
+4. Do not overstate guarantees: this is correctness-improving, not linearizable across stores.
+
+**Idempotency**
+1. `canView` is now idempotent and side-effect free.
+2. Repeated calls under the same underlying state should return the same result.
+3. For write-side changes, make index update events idempotent (event id + upsert-by-document-id) to reduce duplicate/conflicting index states that create ambiguity.
+
+**Failure modes**
+1. Index replication lag or reorder causes stale allow/deny on index-only checks (fixed by fallback).
+2. Duplicate index documents for same `documentId` cause ambiguous matches (detected, fallback to DB).
+3. Empty / corrupted snapshot causes false negatives/false positives; fallback covers both.
+4. Search outage causes temporary fallback load on DB and possible latency increase.
+
+**Operational visibility**
+1. Add counters:
+   - `doc_access_index_miss`
+   - `doc_access_index_ambiguous`
+   - `doc_access_index_error`
+   - `doc_access_fallback_to_db`
+2. Track p99/p50 latency for:
+   - normal index path,
+   - fallback path.
+3. Alert on surge in fallback/ambiguity rate after deploy.
+4. Add sampled parity check job: compare `canView` from index path vs DB every few minutes and alert on drift.
+
+**Tests/experiments**
+1. Unit tests:
+   - search returns null -> DB decision path used.
+   - search throws -> DB decision path used.
+   - 0 hits, >1 hit, malformed payload -> DB fallback.
+   - success hit with allowed and denied cases.
+2. Integration test:
+   - grant/revoke in DB then read immediately before/after index refresh.
+   - verify no false allow when revoked if fallback is triggered by stale detection/version.
+3. Chaos/operational tests:
+   - partial index lag,
+   - duplicate docs in index,
+   - index node restart.
+4. Production canary:
+   - dual-write-read audit sampling to detect divergence between index-derived and DB-derived decisions by document/user pair.
+tokens used
+9,866
+
+
+exit_code: 0

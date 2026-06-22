@@ -1,0 +1,225 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/redis-distributed-lock-money-transfer/control-response.md -
+
+## stdout
+You’re asking for a Java backend code review and a concrete patch to make the wallet transfer safe for retries, pauses, crashes, and concurrent execution across instances.
+
+```java
+public final class WalletService {
+    private static final Duration LOCK_TTL = Duration.ofSeconds(30);
+
+    private final RedisLockClient locks;
+    private final AccountRepository accounts;
+    private final TransferLedgerRepository transferLedger; // idempotency ledger (PK: transferId)
+
+    @Transactional
+    public void transfer(UUID from, UUID to, long cents, UUID transferId) {
+        if (from == null || to == null) {
+            throw new IllegalArgumentException("from/to required");
+        }
+        if (from.equals(to)) {
+            throw new IllegalArgumentException("from and to must differ");
+        }
+        if (cents <= 0) {
+            throw new IllegalArgumentException("cents must be positive");
+        }
+
+        UUID first = from.compareTo(to) < 0 ? from : to;
+        UUID second = from.compareTo(to) < 0 ? to : from;
+
+        // deterministic lock order prevents cross-instance deadlock
+        try (Lock lock1 = locks.acquire(walletLockKey(first), LOCK_TTL);
+             Lock lock2 = locks.acquire(walletLockKey(second), LOCK_TTL)) {
+
+            // protects retries: same transferId is idempotent
+            TransferStatus status = transferLedger.tryStart(transferId, from, to, cents);
+            if (status == TransferStatus.DUPLICATE_COMPLETED) {
+                return;
+            }
+
+            // DB row locks serialize concurrent transfers touching same accounts
+            Account source = accounts.findForUpdate(from)
+                    .orElseThrow(() -> new IllegalArgumentException("source account not found"));
+            Account target = accounts.findForUpdate(to)
+                    .orElseThrow(() -> new IllegalArgumentException("target account not found"));
+
+            source.debit(cents);   // should throw if insufficient funds
+            target.credit(cents);
+
+            accounts.save(source);
+            accounts.save(target);
+
+            transferLedger.markCompleted(transferId);
+        }
+    }
+
+    private String walletLockKey(UUID accountId) {
+        return "wallet:account:" + accountId;
+    }
+}
+```
+
+Suggested `TransferLedgerRepository` contract:
+
+```java
+public interface TransferLedgerRepository {
+    // INSERT ... ON CONFLICT (transfer_id) DO NOTHING
+    // return DUPLICATE_COMPLETED if already completed, else STARTED
+    TransferStatus tryStart(UUID transferId, UUID from, UUID to, long cents);
+
+    void markCompleted(UUID transferId);
+}
+
+public enum TransferStatus {
+    STARTED,
+    DUPLICATE_COMPLETED
+}
+```
+
+Key fixes this introduces:
+- Ordered dual locks on account ids to avoid deadlocks and scope contention correctly.
+- Longer lock TTL (and renewal in the lock client, if supported) to survive pauses.
+- Transactional boundary + row-level locks (`findForUpdate`) for crash-safe atomic debit/credit.
+- Idempotency key (`transferId`) to prevent double-apply during retries.
+- Input validation and account existence checks.
+
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7f-dbae-79c0-aab7-1073f98f33a7
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Control Instructions
+
+Answer the Java coding case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill. Review the code as a general Java backend coding task and provide the patch you would normally recommend.
+
+## Scenario
+
+A wallet service transfers money between accounts. The team added Redis locks around the method and now wants approval to run transfers concurrently across many service instances.
+
+## Java Code
+
+```java
+public final class WalletService {
+    private final RedisLockClient locks;
+    private final AccountRepository accounts;
+
+    public void transfer(UUID from, UUID to, long cents) {
+        String lockKey = "wallet:" + from + ":" + to;
+        try (Lock ignored = locks.acquire(lockKey, Duration.ofSeconds(5))) {
+            Account source = accounts.find(from);
+            Account target = accounts.find(to);
+            accounts.save(source.debit(cents));
+            accounts.save(target.credit(cents));
+        }
+    }
+}
+```
+
+## Task
+
+Review the code and propose a patch that protects account balances under retries, pauses, crashes, and concurrent transfers.
+
+codex
+You’re asking for a Java backend code review and a concrete patch to make the wallet transfer safe for retries, pauses, crashes, and concurrent execution across instances.
+
+```java
+public final class WalletService {
+    private static final Duration LOCK_TTL = Duration.ofSeconds(30);
+
+    private final RedisLockClient locks;
+    private final AccountRepository accounts;
+    private final TransferLedgerRepository transferLedger; // idempotency ledger (PK: transferId)
+
+    @Transactional
+    public void transfer(UUID from, UUID to, long cents, UUID transferId) {
+        if (from == null || to == null) {
+            throw new IllegalArgumentException("from/to required");
+        }
+        if (from.equals(to)) {
+            throw new IllegalArgumentException("from and to must differ");
+        }
+        if (cents <= 0) {
+            throw new IllegalArgumentException("cents must be positive");
+        }
+
+        UUID first = from.compareTo(to) < 0 ? from : to;
+        UUID second = from.compareTo(to) < 0 ? to : from;
+
+        // deterministic lock order prevents cross-instance deadlock
+        try (Lock lock1 = locks.acquire(walletLockKey(first), LOCK_TTL);
+             Lock lock2 = locks.acquire(walletLockKey(second), LOCK_TTL)) {
+
+            // protects retries: same transferId is idempotent
+            TransferStatus status = transferLedger.tryStart(transferId, from, to, cents);
+            if (status == TransferStatus.DUPLICATE_COMPLETED) {
+                return;
+            }
+
+            // DB row locks serialize concurrent transfers touching same accounts
+            Account source = accounts.findForUpdate(from)
+                    .orElseThrow(() -> new IllegalArgumentException("source account not found"));
+            Account target = accounts.findForUpdate(to)
+                    .orElseThrow(() -> new IllegalArgumentException("target account not found"));
+
+            source.debit(cents);   // should throw if insufficient funds
+            target.credit(cents);
+
+            accounts.save(source);
+            accounts.save(target);
+
+            transferLedger.markCompleted(transferId);
+        }
+    }
+
+    private String walletLockKey(UUID accountId) {
+        return "wallet:account:" + accountId;
+    }
+}
+```
+
+Suggested `TransferLedgerRepository` contract:
+
+```java
+public interface TransferLedgerRepository {
+    // INSERT ... ON CONFLICT (transfer_id) DO NOTHING
+    // return DUPLICATE_COMPLETED if already completed, else STARTED
+    TransferStatus tryStart(UUID transferId, UUID from, UUID to, long cents);
+
+    void markCompleted(UUID transferId);
+}
+
+public enum TransferStatus {
+    STARTED,
+    DUPLICATE_COMPLETED
+}
+```
+
+Key fixes this introduces:
+- Ordered dual locks on account ids to avoid deadlocks and scope contention correctly.
+- Longer lock TTL (and renewal in the lock client, if supported) to survive pauses.
+- Transactional boundary + row-level locks (`findForUpdate`) for crash-safe atomic debit/credit.
+- Idempotency key (`transferId`) to prevent double-apply during retries.
+- Input validation and account existence checks.
+
+tokens used
+8,833
+
+
+exit_code: 0

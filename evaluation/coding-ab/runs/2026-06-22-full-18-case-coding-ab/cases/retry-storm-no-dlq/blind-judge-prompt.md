@@ -1,0 +1,348 @@
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: retry-storm-no-dlq
+Category: bad
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: retry-storm-no-dlq
+
+Case ID: retry-storm-no-dlq
+Category: bad
+Language: Java
+Primary DDIA topics: retries, queues, idempotency, fault tolerance
+
+## Scenario
+
+An email worker reads jobs from a queue, sends each message, and acknowledges the queue item afterward. During an outage, operators saw repeated sends for some users and one malformed job kept cycling through workers.
+
+## Flawed Java
+
+```java
+public final class EmailWorker {
+    private final QueueClient queue;
+    private final EmailSender sender;
+
+    public void handle(Message message) {
+        EmailJob job = EmailJob.fromJson(message.body());
+        sender.send(job.to(), job.subject(), job.body());
+        queue.ack(message.id());
+    }
+}
+```
+
+## Task
+
+Review the worker and propose a patch that handles send failures, acknowledgement failures, and malformed or permanently failing jobs.
+
+## Expected DDIA Reasoning
+
+The answer should identify that a failure after `sender.send` and before `queue.ack` can duplicate email, while poison messages can retry forever. A strong patch should add idempotency keys for sends, bounded retries, a dead-letter path, visibility timeout handling, and metrics for retry and DLQ behavior.
+
+## Strong Patch Signals
+
+- Uses an idempotent send key or durable sent-record keyed by message or email job id.
+- Tracks attempt count and moves exhausted or invalid messages to a DLQ.
+- Handles visibility timeout and adds tests for duplicate sends and retry exhaustion.
+
+## Weak Patch Patterns
+
+- Catches all exceptions and acknowledges the message, losing unsent email.
+- Retries forever without a dead-letter policy or operator-visible state.
+- Adds sleep in the handler without backpressure, attempt limits, or queue-level controls.
+
+## Scoring Notes
+
+- Award high scores for separating transient failures from poison messages and making duplicates observable.
+- Penalize answers that trade duplicate sends for silent data loss.
+
+
+## Response A
+
+A clearer version of your request: *“Please review this Java email worker and propose the smallest practical patch that prevents bad handling of malformed jobs, send failures, and ack failures, while keeping correctness in a distributed system.”*
+
+1. Assumptions and workload shape  
+- The queue is at-least-once (messages can be redelivered).  
+- `EmailSender` is an external side effect and may fail after partially succeeding.  
+- The source of truth for “already processed” should be a durable store (not the queue alone).  
+- Worker should be able to retry transient failures and dead-letter permanently bad jobs.  
+
+2. Why the current code is incorrect (distributed-data bug)  
+- It has no failure branch, so any parse/send/ack exception drops out and leaves implicit behavior to the runtime.  
+- Malformed messages can loop forever because they are never classified as dead-lettered.  
+- Queue redelivery + no idempotency allows duplicate email sends.  
+- `send` and `ack` are in two systems with no shared transaction boundary, so you can observe:
+  - send succeeds, ack fails -> duplicate retry risk  
+  - send fails, ack happens never -> retries desired  
+- This is the classic distributed consistency problem: two independently-faulted state transitions (external provider, queue state) without a commit boundary.
+
+3. Minimal patch (practical Java guidance)  
+Introduce durable idempotency/ledger and explicit branches for parse/send/ack outcomes.
+
+```java
+public final class EmailWorker {
+    private final QueueClient queue;
+    private final EmailSender sender;
+    private final DeliveryLedger ledger; // durable store: states NEW/PROCESSING/SENT/FAILED
+    private final int maxAttempts = 5;
+
+    public void handle(Message message) {
+        final String msgId = message.id();
+
+        final EmailJob job;
+        try {
+            job = EmailJob.fromJson(message.body());
+        } catch (Exception ex) {
+            queue.deadLetter(msgId, "malformed-json");
+            return;
+        }
+
+        if (job.id() == null || job.id().isBlank()) {
+            queue.deadLetter(msgId, "missing-job-id");
+            return;
+        }
+
+        try {
+            // Claim dedupe/transaction boundary in DB only.
+            DeliveryState state = ledger.tryMarkProcessing(job.id());
+            switch (state) {
+                case SENT -> {
+                    queue.ack(msgId); // safe duplicate; already done before
+                    return;
+                }
+                case PROCESSING -> {
+                    // another worker is already handling; let queue retry policy deal with visibility
+                    queue.nack(msgId, "concurrent-claim");
+                    return;
+                }
+                case FAILED_PERMANENT -> {
+                    queue.deadLetter(msgId, "permanent-failure");
+                    return;
+                }
+                case NEW -> { } // proceed
+            }
+
+            try {
+                sender.send(job.to(), job.subject(), job.body());
+                ledger.markSent(job.id());
+            } catch (EmailRetryableException ex) {
+                ledger.markRetryableFailure(job.id(), ex);
+                if (message.attempt() >= maxAttempts) {
+                    queue.deadLetter(msgId, "send-retry-exhausted");
+                } else {
+                    queue.nack(msgId, backoffFor(message.attempt()));
+                }
+                return;
+            } catch (Exception ex) {
+                ledger.markPermanentFailure(job.id(), ex);
+                queue.deadLetter(msgId, "send-permanent-failure");
+                return;
+            }
+
+            try {
+                queue.ack(msgId);
+            } catch (Exception ex) {
+                // send already marked SENT, so duplicate sends are blocked by ledger
+                queue.nack(msgId, 0); // force deterministic re-drive of queue state
+                throw ex; // optional: let platform alert/retry as needed
+            }
+        } catch (Exception ex) {
+            // last-resort to avoid silent loss
+            ledger.markUnknown(job.id(), ex);
+            throw ex;
+        }
+    }
+}
+```
+
+4. Consistency and correctness implications  
+- Source of truth for correctness is `DeliveryLedger` (durable, authoritative about processed job IDs).  
+- Transaction boundary is between claim/send/mark-sent and ack:
+  - cannot be atomic across queue + email service, so exact atomicity is impossible without message queue transactional integration support.
+  - this patch gives “at-most-once external side effects” via idempotency ledger, and “at-least-once queue handling” via explicit re-drive.
+- Consistency guarantee achieved: duplicate queue deliveries do not duplicate outbound emails (assuming ledger writes are strongly consistent).
+
+5. Failure modes handled  
+- Malformed payload -> immediately dead-letter.  
+- Transient send failures -> bounded retries + dead-letter after N attempts.  
+- Permanent send failures -> dead-letter.  
+- Ack failures after send -> treated as operationally visible and requeued; ledger prevents duplicate send.  
+- Concurrent duplicate processing -> controlled via processing claim state.
+
+6. Operational visibility  
+- Add metrics:
+  - `email_worker_malformed_total`
+  - `email_worker_send_retryable_total`
+  - `email_worker_send_permanent_total`
+  - `email_worker_dead_letter_total`
+  - `email_worker_ack_failure_total`
+  - `email_worker_ledger_inflight_count`
+  - `email_worker_duplicate_suppressed_total`
+- Alerts:
+  - sustained ack failures, increasing dead-letter rate, stale `PROCESSING` rows older than timeout.
+
+7. Tests / experiments  
+- Unit tests:
+  - malformed JSON -> dead-letter, no send call.  
+  - retryable send error -> queue nacks and retries with backoff.  
+  - permanent send error -> dead-letter after classification.  
+  - redelivery after send success + ack fail -> sender called once, second delivery acked/skipped.  
+- Integration/fault-injection:
+  - kill worker during send/ack windows.  
+  - inject queue ack latency/failures and SMTP timeouts.  
+  - verify ledger state transitions and queue visibility metrics.
+
+
+
+## Response B
+
+A more natural version of your request: *Please review this worker and propose a patch so it safely handles send failures, acknowledgement failures, and malformed/permanently failing jobs without causing retry loops.*
+
+```java
+public final class EmailWorker {
+    private static final int MAX_SEND_ATTEMPTS = 4;
+    private static final int MAX_ACK_ATTEMPTS = 3;
+    private static final long BASE_RETRY_DELAY_MS = 500L;
+
+    private final QueueClient queue;
+    private final EmailSender sender;
+
+    public EmailWorker(QueueClient queue, EmailSender sender) {
+        this.queue = queue;
+        this.sender = sender;
+    }
+
+    public void handle(Message message) {
+        String messageId = message.id();
+        EmailJob job;
+
+        try {
+            job = EmailJob.fromJson(message.body());
+        } catch (RuntimeException malformed) {
+            queue.deadLetter(messageId, "malformed-job", malformed);
+            return;
+        }
+
+        int attempt = queue.deliveryAttempt(message); // broker-specific; use available message metadata
+
+        try {
+            // include messageId as idempotency key so duplicates do not send twice downstream
+            sender.send(messageId, job.to(), job.subject(), job.body());
+        } catch (TransientEmailException ex) {
+            if (attempt < MAX_SEND_ATTEMPTS - 1) {
+                queue.retry(message, retryDelayMillis(attempt), "transient-send-failure");
+            } else {
+                queue.deadLetter(messageId, "send-retries-exhausted", ex);
+            }
+            return;
+        } catch (PermanentEmailException ex) {
+            queue.deadLetter(messageId, "permanent-send-failure", ex);
+            return;
+        } catch (RuntimeException ex) {
+            queue.deadLetter(messageId, "unexpected-send-failure", ex);
+            return;
+        }
+
+        if (!ackWithRetry(messageId)) {
+            // if we cannot ack after send, keep it visible only through dead-lettering
+            // to avoid endless duplicate delivery cycles.
+            queue.deadLetter(messageId, "ack-failure-after-send", null);
+        }
+    }
+
+    private boolean ackWithRetry(String messageId) {
+        for (int i = 1; i <= MAX_ACK_ATTEMPTS; i++) {
+            try {
+                queue.ack(messageId);
+                return true;
+            } catch (RuntimeException e) {
+                if (i == MAX_ACK_ATTEMPTS) {
+                    return false;
+                }
+                sleep(retryDelayMillis(i));
+            }
+        }
+        return false;
+    }
+
+    private static long retryDelayMillis(int attempt) {
+        long delay = BASE_RETRY_DELAY_MS * (1L << Math.min(attempt, 8));
+        return Math.min(delay, 60_000L);
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+```
+
+Also define worker-facing queue/send contracts to support this behavior:
+
+```java
+interface QueueClient {
+    int deliveryAttempt(Message message);
+    void retry(Message message, long delayMillis, String reason);
+    void ack(String messageId);
+    void deadLetter(String messageId, String reason, Throwable cause);
+}
+
+interface EmailSender {
+    void send(String idempotencyKey, String to, String subject, String body)
+        throws TransientEmailException, PermanentEmailException;
+}
+```
+
+1. Malformed JSON is now terminally parked in dead-letter instead of cycling forever.
+2. Transient send failures are retried with bounded attempts and backoff; then moved to dead-letter.
+3. Permanent/unexpected send failures are dead-lettered immediately.
+4. Ack failures are retried separately and escalated to dead-letter if they cannot be resolved, preventing repeated duplicate send-on-retry cycles.

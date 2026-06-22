@@ -1,0 +1,138 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "category",
+    "response_a",
+    "response_b",
+    "winner",
+    "rationale"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "good",
+        "bad",
+        "adversarial"
+      ]
+    },
+    "response_a": {
+      "$ref": "#/$defs/response"
+    },
+    "response_b": {
+      "$ref": "#/$defs/response"
+    },
+    "winner": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "tie"
+      ]
+    },
+    "rationale": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correctness_invariant",
+        "source_of_truth_boundary",
+        "failure_mode_handling",
+        "idempotency_retry_safety",
+        "operational_verification",
+        "java_patch_quality",
+        "anti_pattern_resistance"
+      ],
+      "properties": {
+        "correctness_invariant": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "source_of_truth_boundary": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "failure_mode_handling": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "idempotency_retry_safety": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "operational_verification": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "java_patch_quality": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "anti_pattern_resistance": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "enum": [
+                0,
+                1,
+                2
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scores",
+        "rationale"
+      ],
+      "properties": {
+        "scores": {
+          "$ref": "#/$defs/scores"
+        },
+        "rationale": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

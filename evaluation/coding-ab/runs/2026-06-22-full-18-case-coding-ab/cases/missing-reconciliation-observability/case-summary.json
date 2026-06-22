@@ -1,0 +1,20 @@
+{
+  "case_id": "missing-reconciliation-observability",
+  "category": "bad",
+  "mapping": {
+    "A": "treatment",
+    "B": "control"
+  },
+  "control_total": 8,
+  "treatment_total": 11,
+  "denominator": 12,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 3,
+  "normalized_lift": 0.25,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Good concrete Java patch surface with outbox, retry scheduling, dead-lettering, and lag/backlog metrics. However it indexes directly in the request path and enqueues a snapshot on failure, which can still reapply stale data later and can regress docs after newer updates unless ordering/version enforcement is added. Source-of-truth intent is noted, but failure handling and idempotency are incomplete relative to derived-data reconciliation requirements.",
+  "treatment_rationale": "Strongly models search as derived state and replaces inline dual-write with an outbox-backed durable replay path, including bounded eventual consistency and explicit recovery semantics. It addresses key failure modes (crash, indexing outage, backlog) and adds observability plus tests/checks. Idempotency/retry safety is mostly present but less concrete on backoff/dead-letter strategy and exact worker concurrency safety.",
+  "judge_rationale": "Response A is better aligned with DDIA-derived-state recovery goals because it avoids the request-path indexing write as the recovery mechanism and makes replay from durable DB intent the primary path, while including reconciliation-minded verification. Response B is more concrete but has a real correctness gap (possible stale replay overwrite) and weaker observability/testing completeness, so it is lower overall."
+}

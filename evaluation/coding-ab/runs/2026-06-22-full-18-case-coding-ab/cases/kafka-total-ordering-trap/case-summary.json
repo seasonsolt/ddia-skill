@@ -1,0 +1,20 @@
+{
+  "case_id": "kafka-total-ordering-trap",
+  "category": "adversarial",
+  "mapping": {
+    "A": "treatment",
+    "B": "control"
+  },
+  "control_total": 10,
+  "treatment_total": 13,
+  "denominator": 14,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 3,
+  "normalized_lift": 0.2142857142857143,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Corrects the read-before-write race with optimistic CAS update and handles duplicates. However, it does not explicitly ground the source-of-truth boundary as clearly, and it treats gaps by immediate sinking without a full pending/replay recovery mechanism. Operational checks are minimal, and retry safety is only partially covered by a small CAS retry loop plus out-of-order sinking.",
+  "treatment_rationale": "Strongly enforces account-local ordering with a durable CAS-style conditional update (expected previous sequence) and explicitly avoids relying on Kafka offset/global ordering. It adds duplicate/replay handling and an explicit gap/out-of-order path with pending + operational controls. Source-of-truth is correctly rooted in DB state plus immutable stream. Idempotency/retry is partially specified (pending and duplicates) but automatic retry/settlement path is not fully closed in patch.",
+  "judge_rationale": "Response A is stronger overall: it combines per-account ordering assumptions with durable conditional write semantics and operationalized failure handling (including pending/gap strategy, migration deployment risks, and richer observability). Response B is solid on the core CAS fix but is less complete on source-of-truth clarity, gap recovery, and verification depth."
+}

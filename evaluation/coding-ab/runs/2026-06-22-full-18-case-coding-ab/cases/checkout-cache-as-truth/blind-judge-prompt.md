@@ -1,0 +1,335 @@
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: checkout-cache-as-truth
+Category: bad
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: checkout-cache-as-truth
+
+Case ID: checkout-cache-as-truth
+Category: bad
+Language: Java
+Primary DDIA topics: source of truth, cache invalidation, transactions, recovery
+
+## Scenario
+
+A checkout service reserves inventory by decrementing Redis first because the product table is under heavy load. A nightly job reconciles Redis back to Postgres. The team asks for a small Java patch to make checkout safer during flash sales.
+
+## Flawed Java
+
+```java
+public final class CheckoutService {
+    private final RedisClient redis;
+    private final OrderRepository orders;
+
+    public Receipt checkout(String sku, String userId) {
+        long remaining = redis.decr("stock:" + sku);
+        if (remaining < 0) {
+            redis.incr("stock:" + sku);
+            throw new SoldOutException(sku);
+        }
+
+        Order order = orders.insert(new Order(sku, userId, "CONFIRMED"));
+        return new Receipt(order.id(), "confirmed");
+    }
+}
+```
+
+## Task
+
+Review the code and propose a Java-oriented patch. Keep the answer focused on the correctness issue and tests that would prove the patch handles crashes, retries, and oversell pressure.
+
+## Expected DDIA Reasoning
+
+The answer should reject Redis as the authoritative inventory record, identify the crash window between `decr` and `orders.insert`, and move the invariant into a durable transactional boundary or explicit reservation workflow. It should discuss idempotency for repeated checkout attempts and reconciliation for ambiguous outcomes.
+
+## Strong Patch Signals
+
+- Makes Postgres or another durable transactional store the source of truth for inventory and orders.
+- Uses a conditional update, row lock, reservation row, or equivalent invariant-preserving transaction.
+- Adds idempotency keys and tests for duplicate requests, process crash after reservation, and concurrent checkout attempts.
+
+## Weak Patch Patterns
+
+- Adds a Redis lock while leaving Redis as the only proof of inventory.
+- Retries `orders.insert` without defining how duplicate orders or lost decrements are handled.
+- Treats the nightly reconciliation job as sufficient for user-facing correctness.
+
+## Scoring Notes
+
+- Award high scores for a patch that names the invariant and tests concurrent oversell behavior.
+- Penalize answers that only add null checks, exception handling, or cache TTL changes.
+
+
+## Response A
+
+A clearer version of your request: Review this checkout path as a distributed-data correctness problem and give the smallest Java patch that makes it safer for flash sales, with concrete notes on assumptions, consistency guarantees, transaction boundaries, idempotency, failure modes, observability, and tests.
+
+1. Assumptions and workload shape
+- Reads are high during flash sales, writes are bursty and mostly single-unit checkout attempts.
+- Correctness target is “no confirmed oversell” and “eventual consistency across Redis and Postgres”.
+- Caller may retry on timeouts and may retry the same request.
+- Inventory changes are authoritative long-term in Postgres, Redis is a fast admission-control cache.
+
+2. What is broken (and why it is a distributed data problem)
+- The current flow mutates two systems without a shared transaction:
+  - Redis stock is decremented before `orders.insert(...)`.
+  - If the DB write fails after decrement, stock is leaked in Redis and can be unavailable until nightly reconciliation.
+- This is the classic dual-writer / split-brain pattern for derived state:
+  - Redis and Postgres can diverge.
+  - The method is not crash-safe (kill path between decrement and insert gives drift).
+- The code also treats each request as non-idempotent, so client retries can create duplicate orders unless protected elsewhere.
+
+3. Source of truth and consistency model
+- Define Postgres as source of truth for durable inventory semantics and order records.
+- Redis should be a best-effort admission controller only, not the only source of correctness.
+- Adopt “at-most-one-confirmed-order per request-id + compensating cleanup on failure,” not impossible atomicity across systems.
+
+4. Smallest correctness patch (Java-oriented)
+- Add idempotency key from API request (e.g., `requestId`).
+- Reserve stock and create a short reservation marker atomically in Redis.
+- On DB failure, release only if reservation still exists (to avoid double-release).
+- Persist idempotency success mapping (or unique index) so retries return the same receipt.
+
+```java
+public final class CheckoutService {
+    private final RedisClient redis;
+    private final OrderRepository orders;
+    private final IdempotencyRepository idem;
+
+    public Receipt checkout(String sku, String userId, String requestId) {
+        var existing = idem.findReceipt(requestId);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        String stockKey = "stock:" + sku;
+        String reserveKey = "reserve:" + sku + ":" + requestId;
+
+        long remaining = reserveStockWithToken(stockKey, reserveKey);
+        if (remaining < 0) {
+            throw new SoldOutException(sku);
+        }
+
+        try {
+            Order order = orders.insert(new Order(sku, userId, requestId, "CONFIRMED"));
+            idem.saveSuccess(requestId, order.id());
+            return new Receipt(order.id(), "confirmed");
+        } catch (Exception e) {
+            releaseIfPending(stockKey, reserveKey);
+            throw e;
+        }
+    }
+
+    private long reserveStockWithToken(String stockKey, String reserveKey) {
+        // Lua: if stock > 0 then DECR and SET reserve marker with short TTL, else return -1
+        Object r = redis.eval("""
+            local stock = redis.call('GET', KEYS[1])
+            if not stock then return -1 end
+            local n = tonumber(stock)
+            if n <= 0 then return -1 end
+            local after = redis.call('DECR', KEYS[1])
+            if after < 0 then
+              redis.call('INCR', KEYS[1])
+              return -1
+            end
+            redis.call('SET', KEYS[2], '1', 'EX', 120)
+            return after
+        """, List.of(stockKey, reserveKey), List.of());
+        return ((Number) r).longValue();
+    }
+
+    private void releaseIfPending(String stockKey, String reserveKey) {
+        // Lua: release only if pending reservation marker still exists
+        redis.eval("""
+            if redis.call('DEL', KEYS[2]) == 1 then
+              return redis.call('INCR', KEYS[1])
+            end
+            return -1
+        """, List.of(stockKey, reserveKey), List.of());
+    }
+}
+```
+
+And in Postgres (or DB layer), enforce request idempotency:
+
+- Add unique constraint/index on `orders.request_id`.
+- In `orders.insert(...)`, catch duplicate-key and return the existing row for that `requestId`.
+
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS orders_request_id_uq ON orders(request_id);
+```
+
+5. Transaction boundaries and guarantees
+- Keep DB transaction boundary around order insert (and idempotency record if same table/trans tx).
+- Redis reservation/release remains an external side effect.
+- Guarantee after this patch (normal process flow): no duplicate confirmed orders per request id and no DB-only failures leaking stock in the common exception path.
+- Remaining unavoidable gap: hard crash between Redis reserve and DB insert can still temporarily drift until stale reservation expiry + reconciliation.
+
+6. Failure modes to make explicit
+- DB timeout after successful DB insert but before method returns: safe (idempotent read/retry should return same order).
+- DB duplicate-key on retry: map to existing receipt instead of creating second order.
+- Redis unavailable: you may fail-closed or fallback; choose explicit behavior (recommended fail-closed for correctness).
+- Reconciliation lag: stale reservations from crashes must be reclaimed by existing nightly job (or a faster periodic reclaimer).
+
+7. Operational visibility
+- Track:
+  - `checkout.reserve.success`
+  - `checkout.checkout_duplicate`
+  - `checkout.db.insert.fail`
+  - `checkout.reserve.release_by_compensation`
+  - `checkout.sold_out`
+  - `reconciler.corrected_reservations`
+  - `redis_stock_vs_db_stock` lag/variance (sampled periodically)
+
+8. Tests / experiments
+- Unit/integration crash-window tests:
+  - DB throws after reserve; assert stock is released and no order exists.
+  - Simulate exception during request before response; retry same `requestId` and assert same receipt is returned once.
+- Concurrency/oversell pressure:
+  - `N` parallel requests with `stock = M`, `M < N`; assert confirmed orders `<= M` and no negative final DB stock.
+- Recovery test:
+  - Inject stale reservation key with TTL expiry; run reconciler and verify stock correction.
+- Idempotency replay test:
+  - same request retried 10 times; one success, zero duplicates, stable order id.
+
+
+## Response B
+
+A more natural way to say your request is: “Please review this Java checkout code and give a small patch that improves correctness for flash sales, with tests covering crashes, retries, and oversell under heavy concurrency.”
+
+### Java patch (recommended)
+
+The correctness gap is that a successful Redis decrement is not compensated when order persistence fails, and retries can double-reserve stock. The safe minimal fix is:
+- add a small idempotency guard, and
+- rollback the Redis decrement on any `OrderRepository` failure.
+
+```java
+public final class CheckoutService {
+    private final RedisClient redis;
+    private final OrderRepository orders;
+
+    private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(10);
+
+    public Receipt checkout(String sku, String userId, String requestId) {
+        String stockKey = "stock:" + sku;
+        String idemKey = "checkout:" + requestId + ":" + sku;
+
+        String existing = redis.get(idemKey);
+        if (existing != null) {
+            if (existing.startsWith("OK:")) {
+                return Receipt.fromId(existing.substring(3)); // helper: Receipt.fromId(String)
+            }
+            if ("IN_PROGRESS".equals(existing)) {
+                throw new CheckoutInProgressException(requestId);
+            }
+        }
+
+        if (!redis.setIfAbsent(idemKey, "IN_PROGRESS", IDEMPOTENCY_TTL)) {
+            throw new CheckoutInProgressException(requestId);
+        }
+
+        long remaining = redis.decr(stockKey);
+        if (remaining < 0) {
+            redis.incr(stockKey);
+            redis.set(idemKey, "FAILED:SoldOut", IDEMPOTENCY_TTL);
+            throw new SoldOutException(sku);
+        }
+
+        try {
+            Order order = orders.insert(new Order(sku, userId, "CONFIRMED"));
+            Receipt receipt = new Receipt(order.id(), "confirmed");
+            redis.set(idemKey, "OK:" + order.id(), IDEMPOTENCY_TTL);
+            return receipt;
+        } catch (Exception e) {
+            // Critical compensation on any repo failure during checkout
+            redis.incr(stockKey);
+            redis.set(idemKey, "FAILED:" + e.getClass().getSimpleName(), IDEMPOTENCY_TTL);
+            throw e;
+        }
+    }
+}
+```
+
+### Why this addresses your risks
+
+1. Prevents stock loss when DB write fails after decrement by compensating (`incr`) in catch.
+2. Prevents retry over-consumption by making requests idempotent via `requestId`.
+3. Handles concurrent duplicate retry attempts safely with `IN_PROGRESS` marker + bounded TTL.
+
+### Tests to add (Junit-style)
+
+1. `rollbackWhenOrderInsertFails_shouldRestoreStock`
+   - Set stock to `10`.
+   - Make `orders.insert` throw on call.
+   - Assert `checkout` throws, `stock:"sku"` returns to `10`, and idempotency key is marked failed.
+
+2. `retrySameRequest_afterTransientFailure_shouldCreateAtMostOneOrderAndOneDecrement`
+   - First call with `requestId` causes insert failure after stock decrement.
+   - Ensure stock restored and key is FAILED.
+   - Second retry with same `requestId` succeeds.
+   - Assert only 1 order row, final stock decremented by exactly 1.
+
+3. `retrySameRequestId_whenFirstCallCompletes_returnsSameReceipt`
+   - First call succeeds and stores `OK:orderId`.
+   - Second call with same `requestId` returns same receipt.
+   - Assert `orders.insert` called exactly once and stock decremented exactly once.
+
+4. `concurrentFlashSale_oversellPressure_shouldNeverGoNegativeOrExceedInventory`
+   - Initial stock = `100`.
+   - Run 1,000 concurrent checkouts with distinct requestIds.
+   - Assert at most 100 successful checkouts, 900 failed with sold-out/retry handling, and final stock is never negative.
+
+5. `inProgressRetryWindow_shouldReturnInProgressOnConcurrentDuplicateRequest`
+   - Start one call and pause before DB insert.
+   - Concurrent duplicate with same `requestId` should get `CheckoutInProgressException`.
+   - After first completes, duplicate with same requestId should get cached success/failure result.
+
+If you want, I can provide this as a strict `git diff` style patch next.

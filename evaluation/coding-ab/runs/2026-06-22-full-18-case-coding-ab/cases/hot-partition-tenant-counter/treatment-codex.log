@@ -1,0 +1,373 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/hot-partition-tenant-counter/treatment-response.md -
+
+## stdout
+You are asking for a DDIA-style review of this DynamoDB counter service and a minimal patch to handle one tenant with bursty high write rate while keeping usage reads usable.
+
+1. Assumptions and workload shape
+- Mix of many low-traffic tenants and one hot tenant.
+- Writes to usage are frequent and spike-driven; reads are needed for dashboards/billing, likely near real-time but not necessarily strict single-write atomic snapshots.
+- DynamoDB request rate is the bottleneck, not Java CPU.
+
+2. Recommendation (smallest useful patch)
+- The current bug is a **hot partition** problem: one `tenant_id` maps to one item, so all spikes for that tenant hit the same partition and throttling kicks in.
+- Split each tenant into multiple counter shards and sum them on read.
+
+Minimal service-level patch (requires table key `tenant_id` + `shard_id`):
+```java
+public final class UsageCounterService {
+    private static final int SHARD_COUNT = 32;
+
+    private final DynamoDbClient dynamo;
+    private final String tableName = "tenant_usage";
+
+    public UsageCounterService(DynamoDbClient dynamo) {
+        this.dynamo = dynamo;
+    }
+
+    public void recordRequest(String tenantId) {
+        int shard = ThreadLocalRandom.current().nextInt(SHARD_COUNT);
+        Map<String, AttributeValue> key = Map.of(
+            "tenant_id", AttributeValue.fromS(tenantId),
+            "shard_id", AttributeValue.fromN(Integer.toString(shard))
+        );
+
+        int attempts = 0;
+        while (true) {
+            try {
+                dynamo.updateItem(UpdateItemRequest.builder()
+                    .tableName(tableName)
+                    .key(key)
+                    .updateExpression("ADD request_count :one")
+                    .expressionAttributeValues(Map.of(":one", AttributeValue.fromN("1")))
+                    .build());
+                return;
+            } catch (DynamoDbException e) {
+                // minimal, bounded retry for throttling
+                if (isRetryableThrottle(e) && attempts < 3) {
+                    attempts++;
+                    try { Thread.sleep((long) (Math.pow(2, attempts) * 10 + ThreadLocalRandom.current().nextDouble(5))); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); throw e; }
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    public long readRequestCount(String tenantId) {
+        long total = 0;
+        Map<String, AttributeValue> lek = null;
+
+        do {
+            QueryRequest.Builder qb = QueryRequest.builder()
+                .tableName(tableName)
+                .keyConditionExpression("tenant_id = :t")
+                .expressionAttributeValues(Map.of(":t", AttributeValue.fromS(tenantId)))
+                .projectionExpression("request_count")
+                .consistentRead(true);
+
+            if (lek != null) qb.exclusiveStartKey(lek);
+            var resp = dynamo.query(qb.build());
+
+            for (Map<String, AttributeValue> item : resp.items()) {
+                AttributeValue v = item.get("request_count");
+                if (v != null && v.n() != null) total += Long.parseLong(v.n());
+            }
+            lek = resp.lastEvaluatedKey();
+        } while (lek != null && !lek.isEmpty());
+
+        return total;
+    }
+
+    private boolean isRetryableThrottle(DynamoDbException e) {
+        String n = e.getClass().getSimpleName();
+        return e instanceof ProvisionedThroughputExceededException
+            || e instanceof ThrottlingException
+            || n.contains("LimitExceededException");
+    }
+}
+```
+
+3. Why this is a distributed-data problem
+- Correctness is now constrained by distributed storage partition mechanics, not just method logic.
+- Your “source of truth” is a single item per tenant; that makes correctness appear simple but creates a capacity choke point.
+- In distributed systems, high fan-in writes to one key become a bottleneck before database transactions can help.
+
+4. Transaction boundaries and source-of-truth impact
+- Write boundary: each `updateItem` is atomic per shard item.
+- Read boundary: `readRequestCount` aggregates multiple items and is therefore a derived view, not a single-item snapshot.
+- Practical guarantee: scalable and monotonic-ish under success, but not perfectly linearizable at tenant level in all races unless you add extra coordination.
+
+5. Idempotency and correctness
+- Retried API calls can still overcount because each retry can re-increment.
+- Current semantics are “at-least-once” writes. If exact billing requires strict deduplication, add an idempotency token path (`requestId`) and conditional write to a per-tenant dedupe set (likely with TTL). Not strictly in “smallest” high-throughput patch.
+
+6. Failure modes
+- If all shards still show throttling, spikes exceed total table capacity or shard count too low.
+- Partition imbalance if random sharding is accidentally poor and one shard receives disproportionate traffic.
+- Read partial failures should fail fast rather than return partial totals.
+- Query pagination errors can drop items unless looped correctly.
+
+7. Operational checks
+- Monitor: `ThrottledRequests` per tenant, per shard; write success/error by exception class; p50/p95 write latency.
+- Hot-spot check: `writes_per_shard` distribution for top tenants.
+- Read cost: query calls per top-tenant read and consumed RCUs.
+- Drift check: periodic background recompute of top tenant totals and alert on large deltas.
+
+8. Tests / validation
+- Load test: one tenant at 10–100x normal burst and verify throttles drop materially versus single-key design.
+- Read consistency check: after N writes, compare `readRequestCount(tenant)` with a controlled total.
+- Failure test: inject throttling exceptions and verify bounded retry behavior.
+- Distribution test: confirm shard usage is roughly even (e.g., chi-square or stddev threshold).
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7b-d881-7cb2-86e6-03743e63efc7
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+A multi-tenant API records each request by incrementing a per-tenant usage counter in DynamoDB. Most tenants are small, but one large tenant regularly hits throttling during traffic spikes.
+
+## Java Code
+
+```java
+public final class UsageCounterService {
+    private final DynamoDbClient dynamo;
+
+    public void recordRequest(String tenantId) {
+        dynamo.updateItem(UpdateItemRequest.builder()
+            .tableName("tenant_usage")
+            .key(Map.of("tenant_id", AttributeValue.fromS(tenantId)))
+            .updateExpression("ADD request_count :one")
+            .expressionAttributeValues(Map.of(":one", AttributeValue.fromN("1")))
+            .build());
+    }
+}
+```
+
+## Task
+
+Review the counter design and propose a patch that handles very high request rates for a single tenant while preserving useful usage reads.
+
+codex
+You are asking for a DDIA-style review of this DynamoDB counter service and a minimal patch to handle one tenant with bursty high write rate while keeping usage reads usable.
+
+1. Assumptions and workload shape
+- Mix of many low-traffic tenants and one hot tenant.
+- Writes to usage are frequent and spike-driven; reads are needed for dashboards/billing, likely near real-time but not necessarily strict single-write atomic snapshots.
+- DynamoDB request rate is the bottleneck, not Java CPU.
+
+2. Recommendation (smallest useful patch)
+- The current bug is a **hot partition** problem: one `tenant_id` maps to one item, so all spikes for that tenant hit the same partition and throttling kicks in.
+- Split each tenant into multiple counter shards and sum them on read.
+
+Minimal service-level patch (requires table key `tenant_id` + `shard_id`):
+```java
+public final class UsageCounterService {
+    private static final int SHARD_COUNT = 32;
+
+    private final DynamoDbClient dynamo;
+    private final String tableName = "tenant_usage";
+
+    public UsageCounterService(DynamoDbClient dynamo) {
+        this.dynamo = dynamo;
+    }
+
+    public void recordRequest(String tenantId) {
+        int shard = ThreadLocalRandom.current().nextInt(SHARD_COUNT);
+        Map<String, AttributeValue> key = Map.of(
+            "tenant_id", AttributeValue.fromS(tenantId),
+            "shard_id", AttributeValue.fromN(Integer.toString(shard))
+        );
+
+        int attempts = 0;
+        while (true) {
+            try {
+                dynamo.updateItem(UpdateItemRequest.builder()
+                    .tableName(tableName)
+                    .key(key)
+                    .updateExpression("ADD request_count :one")
+                    .expressionAttributeValues(Map.of(":one", AttributeValue.fromN("1")))
+                    .build());
+                return;
+            } catch (DynamoDbException e) {
+                // minimal, bounded retry for throttling
+                if (isRetryableThrottle(e) && attempts < 3) {
+                    attempts++;
+                    try { Thread.sleep((long) (Math.pow(2, attempts) * 10 + ThreadLocalRandom.current().nextDouble(5))); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); throw e; }
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    public long readRequestCount(String tenantId) {
+        long total = 0;
+        Map<String, AttributeValue> lek = null;
+
+        do {
+            QueryRequest.Builder qb = QueryRequest.builder()
+                .tableName(tableName)
+                .keyConditionExpression("tenant_id = :t")
+                .expressionAttributeValues(Map.of(":t", AttributeValue.fromS(tenantId)))
+                .projectionExpression("request_count")
+                .consistentRead(true);
+
+            if (lek != null) qb.exclusiveStartKey(lek);
+            var resp = dynamo.query(qb.build());
+
+            for (Map<String, AttributeValue> item : resp.items()) {
+                AttributeValue v = item.get("request_count");
+                if (v != null && v.n() != null) total += Long.parseLong(v.n());
+            }
+            lek = resp.lastEvaluatedKey();
+        } while (lek != null && !lek.isEmpty());
+
+        return total;
+    }
+
+    private boolean isRetryableThrottle(DynamoDbException e) {
+        String n = e.getClass().getSimpleName();
+        return e instanceof ProvisionedThroughputExceededException
+            || e instanceof ThrottlingException
+            || n.contains("LimitExceededException");
+    }
+}
+```
+
+3. Why this is a distributed-data problem
+- Correctness is now constrained by distributed storage partition mechanics, not just method logic.
+- Your “source of truth” is a single item per tenant; that makes correctness appear simple but creates a capacity choke point.
+- In distributed systems, high fan-in writes to one key become a bottleneck before database transactions can help.
+
+4. Transaction boundaries and source-of-truth impact
+- Write boundary: each `updateItem` is atomic per shard item.
+- Read boundary: `readRequestCount` aggregates multiple items and is therefore a derived view, not a single-item snapshot.
+- Practical guarantee: scalable and monotonic-ish under success, but not perfectly linearizable at tenant level in all races unless you add extra coordination.
+
+5. Idempotency and correctness
+- Retried API calls can still overcount because each retry can re-increment.
+- Current semantics are “at-least-once” writes. If exact billing requires strict deduplication, add an idempotency token path (`requestId`) and conditional write to a per-tenant dedupe set (likely with TTL). Not strictly in “smallest” high-throughput patch.
+
+6. Failure modes
+- If all shards still show throttling, spikes exceed total table capacity or shard count too low.
+- Partition imbalance if random sharding is accidentally poor and one shard receives disproportionate traffic.
+- Read partial failures should fail fast rather than return partial totals.
+- Query pagination errors can drop items unless looped correctly.
+
+7. Operational checks
+- Monitor: `ThrottledRequests` per tenant, per shard; write success/error by exception class; p50/p95 write latency.
+- Hot-spot check: `writes_per_shard` distribution for top tenants.
+- Read cost: query calls per top-tenant read and consumed RCUs.
+- Drift check: periodic background recompute of top tenant totals and alert on large deltas.
+
+8. Tests / validation
+- Load test: one tenant at 10–100x normal burst and verify throttles drop materially versus single-key design.
+- Read consistency check: after N writes, compare `readRequestCount(tenant)` with a controlled total.
+- Failure test: inject throttling exceptions and verify bounded retry behavior.
+- Distribution test: confirm shard usage is roughly even (e.g., chi-square or stddev threshold).
+tokens used
+7,397
+
+
+exit_code: 0

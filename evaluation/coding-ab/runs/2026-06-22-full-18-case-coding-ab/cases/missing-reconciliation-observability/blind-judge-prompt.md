@@ -1,0 +1,370 @@
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: missing-reconciliation-observability
+Category: bad
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: missing-reconciliation-observability
+
+Case ID: missing-reconciliation-observability
+Category: bad
+Language: Java
+Primary DDIA topics: derived data, change data capture, recovery, observability
+
+## Scenario
+
+A product service updates Postgres and then immediately updates a search index. Support reports products whose details are correct in the admin database but stale or missing in search results.
+
+## Flawed Java
+
+```java
+public final class SearchIndexUpdater {
+    private final ProductRepository products;
+    private final SearchClient search;
+
+    public void updateProduct(UUID productId, ProductPatch patch) {
+        Product product = products.update(productId, patch);
+        search.index("products", productId.toString(), ProductDocument.from(product));
+    }
+}
+```
+
+## Task
+
+Review the update path and propose a patch that keeps the search index recoverable and observable when indexing fails or falls behind.
+
+## Expected DDIA Reasoning
+
+The answer should identify search as derived data that can drift from Postgres. A good patch should use an outbox, durable change log, or CDC stream for indexing work, make the indexer idempotent, add reconciliation or reindexing, and expose lag and drift metrics with runbook checks.
+
+## Strong Patch Signals
+
+- Writes a durable indexing event or consumes a durable database change log.
+- Makes the indexer idempotent and includes a reindex or reconciliation job.
+- Adds drift metrics, indexing lag metrics, and failure-injection tests.
+
+## Weak Patch Patterns
+
+- Retries `search.index` inline only, keeping the request path as the recovery mechanism.
+- Treats search as authoritative when it conflicts with Postgres.
+- Ignores index lag, failed updates, or operator runbook checks.
+
+## Scoring Notes
+
+- Award high scores for explaining search as derived state and designing repair paths.
+- Penalize answers that only improve immediate retry behavior without durable catch-up.
+
+
+## Response A
+
+A clearer version of your request is: *Please review this update flow as a distributed-data problem, identify the bug and failure risks, and propose the smallest Java patch that makes search indexing recoverable and observable when indexing fails or falls behind.*
+
+### Assumptions and workload shape
+- `products` database is the source of truth.
+- Search index is a derived/read-optimized view.
+- Product reads should be correct in DB immediately; search can be stale for a bounded period.
+- Current write/read ratio is moderate and index lag is acceptable only if measurable and recoverable.
+
+### Bug and why this is a distributed data issue
+- The code performs a dual-write across two independent systems: Postgres and search.
+- `products.update(...)` and `search.index(...)` are not atomic across services, so a failure between/after these calls causes divergence.
+- There is no recovery path for failed indexing, so data can become permanently inconsistent in search.
+- No idempotency handling: retries can create duplicate/overlapping work and make recovery behavior hard to reason about.
+
+### Smallest practical patch (correctness improvement)
+Use a **transactional outbox** for index updates so both update and event recording are in the same DB transaction, then replay events asynchronously to search.
+
+```java
+public final class SearchIndexUpdater {
+    private final ProductRepository products;
+    private final SearchOutboxRepository outbox;
+
+    @Transactional
+    public void updateProduct(UUID productId, ProductPatch patch) {
+        Product product = products.update(productId, patch); // increments version
+        outbox.enqueue(
+            new SearchIndexUpdateEvent(product.id(), product.version(), Instant.now())
+        );
+    }
+}
+```
+
+```java
+public final class SearchIndexOutboxWorker {
+    private final SearchOutboxRepository outbox;
+    private final ProductRepository products;
+    private final SearchClient search;
+    private final Clock clock;
+
+    @Scheduled(fixedDelay = "2s")
+    @Transactional
+    public void drain() {
+        for (var event : outbox.fetchPending(100)) {
+            try {
+                Product product = products.findById(event.productId());
+                search.index(
+                    "products",
+                    event.productId().toString(),
+                    ProductDocument.from(product).withVersion(event.version()) // idempotent upsert target
+                );
+                outbox.markCompleted(event.id(), clock.instant());
+            } catch (Exception e) {
+                outbox.recordFailure(event.id(), e.getMessage(), clock.instant());
+                // keep pending/retryable with backoff
+            }
+        }
+    }
+}
+```
+
+- Keep `search.index` as an **upsert** by stable document id, so replays are idempotent.
+- Add `version` to document metadata and optionally reject older versions if your search layer supports it (or rely on overwrite semantics of full-document upsert).
+
+### Transaction boundaries, idempotency, and recovery semantics
+- **Transaction boundary**: DB transaction should include both product mutation and outbox enqueue (single source of write ordering/acknowledgment).
+- **Search transaction**: remains eventual and retried asynchronously.
+- **Guarantee gained**: if product update commits, index update intent is durable in DB and replayable.
+- **Guarantee not gained**: synchronous read-your-write on search; you get eventual consistency with bounded recovery visibility.
+
+### Failure modes addressed
+- Search outage at index time: event stays pending/retryable, not lost.
+- Writer crash after DB commit: outbox row survives and is replayed.
+- Consumer crash/restart: pending rows replay on next run.
+- Temporary duplicate processing: idempotent upsert removes correctness drift risk.
+- Backlog/falls-behind: worker cadence and retry policy govern catch-up.
+
+### Operational visibility
+- Track:
+  - `outbox.pending_count`
+  - `outbox.oldest_unpublished_age_ms`
+  - `outbox.failed_count`
+  - `search.index.success_total`, `search.index.retry_total`, `search.index.dead_letter_total`
+- Alert when pending age or failure ratio breaches SLO.
+- Log structured trace IDs across `updateProduct` and worker attempts (`productId`, `version`, `eventId`).
+
+### Tests to validate
+- Unit/integration test:
+  - DB update succeeds, search throws once, then succeeds on worker retry; verify final search doc updated.
+- Idempotency test:
+  - Same event processed twice; final indexed document remains latest state.
+- Chaos/failure tests:
+  - forced search outage, worker crash, and long backlog growth with lag alert checks.
+- Consistency check:
+  - scheduled reconciliation between product `updated_at` and latest indexed version; verify no permanently stale products.
+
+If you want, I can give a compact table schema and a tiny SQL migration for the outbox table next.
+
+## Response B
+
+A more natural version of your request:  
+**Please review this Java update flow and recommend a patch that makes search indexing recoverable and observable when indexing fails or falls behind.**
+
+```java
+// SearchIndexUpdater.java
+package com.example.product;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+@Component
+public final class SearchIndexUpdater {
+    private static final Logger log = LoggerFactory.getLogger(SearchIndexUpdater.class);
+    private static final int MAX_RETRIES = 8;
+
+    private final ProductRepository products;
+    private final SearchClient search;
+    private final SearchIndexOutboxRepository outbox;
+    private final SearchIndexMetrics metrics;
+    private final Clock clock;
+
+    public SearchIndexUpdater(
+            ProductRepository products,
+            SearchClient search,
+            SearchIndexOutboxRepository outbox,
+            SearchIndexMetrics metrics,
+            Clock clock
+    ) {
+        this.products = products;
+        this.search = search;
+        this.outbox = outbox;
+        this.metrics = metrics;
+        this.clock = clock;
+    }
+
+    @Transactional
+    public void updateProduct(UUID productId, ProductPatch patch) {
+        Product product = products.update(productId, patch);
+        ProductDocument doc = ProductDocument.from(product);
+
+        try {
+            search.index("products", productId.toString(), doc);
+            metrics.indexSuccess.labels("update").inc();
+            return;
+        } catch (Exception e) {
+            // DB change is durable, index write is queued for recovery.
+            outbox.enqueue(new SearchIndexOutboxEvent(
+                    productId,
+                    "products",
+                    product.getVersion(),
+                    doc.toJson(),
+                    0,
+                    Instant.now(clock),
+                    clock.instant(),
+                    SearchIndexOutboxStatus.PENDING
+            ));
+            metrics.indexDeferred.labels("update").inc();
+            log.error("index.update.failed_requeued", 
+                      "productId", productId, 
+                      "cause", e.getClass().getSimpleName());
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${search.indexer.replay-interval-ms:5000}")
+    @Transactional
+    public void replayOutbox() {
+        int limit = 200;
+        for (SearchIndexOutboxEvent event : outbox.claimDueEvents(limit, Instant.now(clock))) {
+            try {
+                search.index(event.indexName(), event.productId().toString(), ProductDocument.fromJson(event.documentJson()));
+                outbox.markDone(event.id());
+                metrics.indexRecovered.labels("from_outbox").inc();
+            } catch (Exception e) {
+                int nextAttempt = event.attempts() + 1;
+                if (nextAttempt >= MAX_RETRIES) {
+                    outbox.markDead(event.id(), e.getClass().getSimpleName() + ": " + e.getMessage());
+                    metrics.indexDeadLettered.labels("from_outbox").inc();
+                    log.error("index.retry.exhausted", "productId", event.productId(), "attempts", nextAttempt, e);
+                    continue;
+                }
+
+                Duration backoff = computeBackoff(nextAttempt);
+                outbox.reschedule(event.id(), clock.instant().plus(backoff), nextAttempt, e.getMessage());
+                metrics.indexRetryScheduled.labels("from_outbox").inc();
+                log.warn("index.retry.scheduled", 
+                         "productId", event.productId(), 
+                         "attempt", nextAttempt, 
+                         "nextAttemptAt", clock.instant().plus(backoff));
+            }
+        }
+
+        // Observability for lag / backlog
+        metrics.outboxPending.set(outbox.countPending());
+        metrics.outboxOldestAgeSeconds.set(outbox.oldestPendingAgeSeconds(clock.instant()));
+    }
+
+    private Duration computeBackoff(int attempt) {
+        int step = Math.min(attempt - 1, 6); // cap to avoid huge growth
+        return Duration.ofSeconds((long) (15 * Math.pow(2, step))); // 15s, 30s, 60s...
+    }
+}
+```
+
+```java
+// SearchIndexOutboxRepository.java
+public interface SearchIndexOutboxRepository {
+    void enqueue(SearchIndexOutboxEvent event);
+    List<SearchIndexOutboxEvent> claimDueEvents(int limit, Instant now);
+    void markDone(long id);
+    void reschedule(long id, Instant nextAttemptAt, int attempts, String lastError);
+    void markDead(long id, String reason);
+    long countPending();
+    long oldestPendingAgeSeconds(Instant now);
+}
+```
+
+```java
+// SearchIndexOutboxStatus.java
+public enum SearchIndexOutboxStatus {
+    PENDING, DONE, DEAD
+}
+```
+
+```java
+// SearchIndexOutboxEvent.java
+public record SearchIndexOutboxEvent(
+    long id,
+    UUID productId,
+    String indexName,
+    long productVersion,
+    String documentJson,
+    int attempts,
+    Instant nextAttemptAt,
+    Instant createdAt,
+    SearchIndexOutboxStatus status,
+    String lastError
+) {}
+```
+
+```java
+// SearchIndexMetrics.java
+public interface SearchIndexMetrics {
+    CounterWithTags indexSuccess();
+    CounterWithTags indexDeferred();
+    CounterWithTags indexRecovered();
+    CounterWithTags indexRetryScheduled();
+    CounterWithTags indexDeadLettered();
+    GaugeWithTags outboxPending();
+    GaugeWithTags outboxOldestAgeSeconds();
+}
+```
+
+Key changes in behavior:
+1. Keep DB update as source of truth and never lose it because search indexing errors occur.
+2. Use an outbox-style queue for recoverable indexing.
+3. Add retry + dead-letter handling for repeatedly failing docs.
+4. Emit backlog and lag metrics so “falls behind” is visible before users see outages.

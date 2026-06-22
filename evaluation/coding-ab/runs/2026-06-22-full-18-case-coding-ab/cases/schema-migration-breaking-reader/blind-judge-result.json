@@ -1,0 +1,36 @@
+{
+  "case_id": "schema-migration-breaking-reader",
+  "category": "bad",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 1,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 0,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 7,
+    "denominator": 12,
+    "pass": false,
+    "rationale": "Provides a correct additive migration shape (publishes both fields and supports fallback in consumer), which prevents the immediate breakage. However, it is narrowly focused on field compatibility and misses explicit operational/contract controls: no source-of-truth or rollout safety framing, limited validation, and no idempotency/duplicate-handling guidance."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 12,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Delivers the same compatible dual-field migration, then explicitly addresses deployment reality for independently deployed readers, missing-field/invalid data failures, duplicate/retry safety, and transactional/ordering implications. Adds concrete validation and operational checks/tests, so it is both safer and more complete for rolling schema migration."
+  },
+  "winner": "B",
+  "rationale": "Response B is superior; it keeps backward compatibility while also covering correctness and operability dimensions (source-of-truth boundaries, failure behavior, idempotency guidance, and verification) that response A leaves unresolved."
+}

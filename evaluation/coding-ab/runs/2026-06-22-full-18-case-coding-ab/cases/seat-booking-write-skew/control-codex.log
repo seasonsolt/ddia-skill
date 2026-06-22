@@ -1,0 +1,184 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/seat-booking-write-skew/control-response.md -
+
+## stdout
+A more natural version of your request is: *“Please review this Java booking method and propose a patch that prevents overselling seats under concurrent load, with retry handling.”*
+
+Use a row lock on the event row before checking capacity, and retry only on transient locking/deadlock failures.
+
+```java
+public final class SeatBookingService {
+    private final BookingRepository bookings;
+    private static final int MAX_RETRIES = 3;
+    private static final long RETRY_DELAY_MS = 20L;
+
+    @Transactional
+    public Booking book(UUID eventId, UUID userId) {
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                // Serialize concurrent bookings for this event
+                Event event = bookings.findEventForUpdate(eventId);
+                int booked = bookings.countConfirmed(eventId);
+
+                if (booked >= event.capacity()) {
+                    throw new SoldOutException(eventId);
+                }
+
+                return bookings.insert(new Booking(eventId, userId, "CONFIRMED"));
+            } catch (PessimisticLockingFailureException
+                     | CannotAcquireLockException
+                     | DeadlockLoserDataAccessException ex) {
+                if (attempt >= MAX_RETRIES) {
+                    throw ex;
+                }
+                sleepWithBackoff(attempt);
+            }
+        }
+
+        throw new SoldOutException(eventId);
+    }
+
+    private void sleepWithBackoff(int attempt) {
+        try {
+            Thread.sleep(RETRY_DELAY_MS * (1L << (attempt - 1)));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while retrying booking", e);
+        }
+    }
+}
+```
+
+```java
+public interface BookingRepository {
+    // Existing method:
+    // int countConfirmed(UUID eventId);
+    // Booking insert(Booking booking);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select e from Event e where e.id = :eventId")
+    Event findEventForUpdate(@Param("eventId") UUID eventId);
+}
+```
+
+If `findEvent` already exists, simply annotate that method with
+`@Lock(LockModeType.PESSIMISTIC_WRITE)` instead of adding a new method name.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef81-c24b-7b82-ab62-4ab0335955bd
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Control Instructions
+
+Answer the Java coding case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill. Review the code as a general Java backend coding task and provide the patch you would normally recommend.
+
+## Scenario
+
+An event ticketing service confirms bookings by counting existing confirmed rows before inserting another booking. During popular releases, operators sometimes see more confirmed bookings than the event capacity.
+
+## Java Code
+
+```java
+public final class SeatBookingService {
+    private final BookingRepository bookings;
+
+    @Transactional
+    public Booking book(UUID eventId, UUID userId) {
+        int booked = bookings.countConfirmed(eventId);
+        Event event = bookings.findEvent(eventId);
+        if (booked >= event.capacity()) {
+            throw new SoldOutException(eventId);
+        }
+        return bookings.insert(new Booking(eventId, userId, "CONFIRMED"));
+    }
+}
+```
+
+## Task
+
+Review the code and propose a patch that keeps confirmed bookings within capacity under concurrent requests and retries.
+
+codex
+A more natural version of your request is: *“Please review this Java booking method and propose a patch that prevents overselling seats under concurrent load, with retry handling.”*
+
+Use a row lock on the event row before checking capacity, and retry only on transient locking/deadlock failures.
+
+```java
+public final class SeatBookingService {
+    private final BookingRepository bookings;
+    private static final int MAX_RETRIES = 3;
+    private static final long RETRY_DELAY_MS = 20L;
+
+    @Transactional
+    public Booking book(UUID eventId, UUID userId) {
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                // Serialize concurrent bookings for this event
+                Event event = bookings.findEventForUpdate(eventId);
+                int booked = bookings.countConfirmed(eventId);
+
+                if (booked >= event.capacity()) {
+                    throw new SoldOutException(eventId);
+                }
+
+                return bookings.insert(new Booking(eventId, userId, "CONFIRMED"));
+            } catch (PessimisticLockingFailureException
+                     | CannotAcquireLockException
+                     | DeadlockLoserDataAccessException ex) {
+                if (attempt >= MAX_RETRIES) {
+                    throw ex;
+                }
+                sleepWithBackoff(attempt);
+            }
+        }
+
+        throw new SoldOutException(eventId);
+    }
+
+    private void sleepWithBackoff(int attempt) {
+        try {
+            Thread.sleep(RETRY_DELAY_MS * (1L << (attempt - 1)));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while retrying booking", e);
+        }
+    }
+}
+```
+
+```java
+public interface BookingRepository {
+    // Existing method:
+    // int countConfirmed(UUID eventId);
+    // Booking insert(Booking booking);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select e from Event e where e.id = :eventId")
+    Event findEventForUpdate(@Param("eventId") UUID eventId);
+}
+```
+
+If `findEvent` already exists, simply annotate that method with
+`@Lock(LockModeType.PESSIMISTIC_WRITE)` instead of adding a new method name.
+tokens used
+7,558
+
+
+exit_code: 0

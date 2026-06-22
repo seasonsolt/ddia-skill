@@ -1,0 +1,403 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/retry-storm-no-dlq/treatment-response.md -
+
+## stdout
+A clearer version of your request: *“Please review this Java email worker and propose the smallest practical patch that prevents bad handling of malformed jobs, send failures, and ack failures, while keeping correctness in a distributed system.”*
+
+1. Assumptions and workload shape  
+- The queue is at-least-once (messages can be redelivered).  
+- `EmailSender` is an external side effect and may fail after partially succeeding.  
+- The source of truth for “already processed” should be a durable store (not the queue alone).  
+- Worker should be able to retry transient failures and dead-letter permanently bad jobs.  
+
+2. Why the current code is incorrect (distributed-data bug)  
+- It has no failure branch, so any parse/send/ack exception drops out and leaves implicit behavior to the runtime.  
+- Malformed messages can loop forever because they are never classified as dead-lettered.  
+- Queue redelivery + no idempotency allows duplicate email sends.  
+- `send` and `ack` are in two systems with no shared transaction boundary, so you can observe:
+  - send succeeds, ack fails -> duplicate retry risk  
+  - send fails, ack happens never -> retries desired  
+- This is the classic distributed consistency problem: two independently-faulted state transitions (external provider, queue state) without a commit boundary.
+
+3. Minimal patch (practical Java guidance)  
+Introduce durable idempotency/ledger and explicit branches for parse/send/ack outcomes.
+
+```java
+public final class EmailWorker {
+    private final QueueClient queue;
+    private final EmailSender sender;
+    private final DeliveryLedger ledger; // durable store: states NEW/PROCESSING/SENT/FAILED
+    private final int maxAttempts = 5;
+
+    public void handle(Message message) {
+        final String msgId = message.id();
+
+        final EmailJob job;
+        try {
+            job = EmailJob.fromJson(message.body());
+        } catch (Exception ex) {
+            queue.deadLetter(msgId, "malformed-json");
+            return;
+        }
+
+        if (job.id() == null || job.id().isBlank()) {
+            queue.deadLetter(msgId, "missing-job-id");
+            return;
+        }
+
+        try {
+            // Claim dedupe/transaction boundary in DB only.
+            DeliveryState state = ledger.tryMarkProcessing(job.id());
+            switch (state) {
+                case SENT -> {
+                    queue.ack(msgId); // safe duplicate; already done before
+                    return;
+                }
+                case PROCESSING -> {
+                    // another worker is already handling; let queue retry policy deal with visibility
+                    queue.nack(msgId, "concurrent-claim");
+                    return;
+                }
+                case FAILED_PERMANENT -> {
+                    queue.deadLetter(msgId, "permanent-failure");
+                    return;
+                }
+                case NEW -> { } // proceed
+            }
+
+            try {
+                sender.send(job.to(), job.subject(), job.body());
+                ledger.markSent(job.id());
+            } catch (EmailRetryableException ex) {
+                ledger.markRetryableFailure(job.id(), ex);
+                if (message.attempt() >= maxAttempts) {
+                    queue.deadLetter(msgId, "send-retry-exhausted");
+                } else {
+                    queue.nack(msgId, backoffFor(message.attempt()));
+                }
+                return;
+            } catch (Exception ex) {
+                ledger.markPermanentFailure(job.id(), ex);
+                queue.deadLetter(msgId, "send-permanent-failure");
+                return;
+            }
+
+            try {
+                queue.ack(msgId);
+            } catch (Exception ex) {
+                // send already marked SENT, so duplicate sends are blocked by ledger
+                queue.nack(msgId, 0); // force deterministic re-drive of queue state
+                throw ex; // optional: let platform alert/retry as needed
+            }
+        } catch (Exception ex) {
+            // last-resort to avoid silent loss
+            ledger.markUnknown(job.id(), ex);
+            throw ex;
+        }
+    }
+}
+```
+
+4. Consistency and correctness implications  
+- Source of truth for correctness is `DeliveryLedger` (durable, authoritative about processed job IDs).  
+- Transaction boundary is between claim/send/mark-sent and ack:
+  - cannot be atomic across queue + email service, so exact atomicity is impossible without message queue transactional integration support.
+  - this patch gives “at-most-once external side effects” via idempotency ledger, and “at-least-once queue handling” via explicit re-drive.
+- Consistency guarantee achieved: duplicate queue deliveries do not duplicate outbound emails (assuming ledger writes are strongly consistent).
+
+5. Failure modes handled  
+- Malformed payload -> immediately dead-letter.  
+- Transient send failures -> bounded retries + dead-letter after N attempts.  
+- Permanent send failures -> dead-letter.  
+- Ack failures after send -> treated as operationally visible and requeued; ledger prevents duplicate send.  
+- Concurrent duplicate processing -> controlled via processing claim state.
+
+6. Operational visibility  
+- Add metrics:
+  - `email_worker_malformed_total`
+  - `email_worker_send_retryable_total`
+  - `email_worker_send_permanent_total`
+  - `email_worker_dead_letter_total`
+  - `email_worker_ack_failure_total`
+  - `email_worker_ledger_inflight_count`
+  - `email_worker_duplicate_suppressed_total`
+- Alerts:
+  - sustained ack failures, increasing dead-letter rate, stale `PROCESSING` rows older than timeout.
+
+7. Tests / experiments  
+- Unit tests:
+  - malformed JSON -> dead-letter, no send call.  
+  - retryable send error -> queue nacks and retries with backoff.  
+  - permanent send error -> dead-letter after classification.  
+  - redelivery after send success + ack fail -> sender called once, second delivery acked/skipped.  
+- Integration/fault-injection:
+  - kill worker during send/ack windows.  
+  - inject queue ack latency/failures and SMTP timeouts.  
+  - verify ledger state transitions and queue visibility metrics.
+
+
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef80-bd2c-7370-a1ff-5270d7409872
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+An email worker reads jobs from a queue, sends each message, and acknowledges the queue item afterward. During an outage, operators saw repeated sends for some users and one malformed job kept cycling through workers.
+
+## Java Code
+
+```java
+public final class EmailWorker {
+    private final QueueClient queue;
+    private final EmailSender sender;
+
+    public void handle(Message message) {
+        EmailJob job = EmailJob.fromJson(message.body());
+        sender.send(job.to(), job.subject(), job.body());
+        queue.ack(message.id());
+    }
+}
+```
+
+## Task
+
+Review the worker and propose a patch that handles send failures, acknowledgement failures, and malformed or permanently failing jobs.
+
+codex
+A clearer version of your request: *“Please review this Java email worker and propose the smallest practical patch that prevents bad handling of malformed jobs, send failures, and ack failures, while keeping correctness in a distributed system.”*
+
+1. Assumptions and workload shape  
+- The queue is at-least-once (messages can be redelivered).  
+- `EmailSender` is an external side effect and may fail after partially succeeding.  
+- The source of truth for “already processed” should be a durable store (not the queue alone).  
+- Worker should be able to retry transient failures and dead-letter permanently bad jobs.  
+
+2. Why the current code is incorrect (distributed-data bug)  
+- It has no failure branch, so any parse/send/ack exception drops out and leaves implicit behavior to the runtime.  
+- Malformed messages can loop forever because they are never classified as dead-lettered.  
+- Queue redelivery + no idempotency allows duplicate email sends.  
+- `send` and `ack` are in two systems with no shared transaction boundary, so you can observe:
+  - send succeeds, ack fails -> duplicate retry risk  
+  - send fails, ack happens never -> retries desired  
+- This is the classic distributed consistency problem: two independently-faulted state transitions (external provider, queue state) without a commit boundary.
+
+3. Minimal patch (practical Java guidance)  
+Introduce durable idempotency/ledger and explicit branches for parse/send/ack outcomes.
+
+```java
+public final class EmailWorker {
+    private final QueueClient queue;
+    private final EmailSender sender;
+    private final DeliveryLedger ledger; // durable store: states NEW/PROCESSING/SENT/FAILED
+    private final int maxAttempts = 5;
+
+    public void handle(Message message) {
+        final String msgId = message.id();
+
+        final EmailJob job;
+        try {
+            job = EmailJob.fromJson(message.body());
+        } catch (Exception ex) {
+            queue.deadLetter(msgId, "malformed-json");
+            return;
+        }
+
+        if (job.id() == null || job.id().isBlank()) {
+            queue.deadLetter(msgId, "missing-job-id");
+            return;
+        }
+
+        try {
+            // Claim dedupe/transaction boundary in DB only.
+            DeliveryState state = ledger.tryMarkProcessing(job.id());
+            switch (state) {
+                case SENT -> {
+                    queue.ack(msgId); // safe duplicate; already done before
+                    return;
+                }
+                case PROCESSING -> {
+                    // another worker is already handling; let queue retry policy deal with visibility
+                    queue.nack(msgId, "concurrent-claim");
+                    return;
+                }
+                case FAILED_PERMANENT -> {
+                    queue.deadLetter(msgId, "permanent-failure");
+                    return;
+                }
+                case NEW -> { } // proceed
+            }
+
+            try {
+                sender.send(job.to(), job.subject(), job.body());
+                ledger.markSent(job.id());
+            } catch (EmailRetryableException ex) {
+                ledger.markRetryableFailure(job.id(), ex);
+                if (message.attempt() >= maxAttempts) {
+                    queue.deadLetter(msgId, "send-retry-exhausted");
+                } else {
+                    queue.nack(msgId, backoffFor(message.attempt()));
+                }
+                return;
+            } catch (Exception ex) {
+                ledger.markPermanentFailure(job.id(), ex);
+                queue.deadLetter(msgId, "send-permanent-failure");
+                return;
+            }
+
+            try {
+                queue.ack(msgId);
+            } catch (Exception ex) {
+                // send already marked SENT, so duplicate sends are blocked by ledger
+                queue.nack(msgId, 0); // force deterministic re-drive of queue state
+                throw ex; // optional: let platform alert/retry as needed
+            }
+        } catch (Exception ex) {
+            // last-resort to avoid silent loss
+            ledger.markUnknown(job.id(), ex);
+            throw ex;
+        }
+    }
+}
+```
+
+4. Consistency and correctness implications  
+- Source of truth for correctness is `DeliveryLedger` (durable, authoritative about processed job IDs).  
+- Transaction boundary is between claim/send/mark-sent and ack:
+  - cannot be atomic across queue + email service, so exact atomicity is impossible without message queue transactional integration support.
+  - this patch gives “at-most-once external side effects” via idempotency ledger, and “at-least-once queue handling” via explicit re-drive.
+- Consistency guarantee achieved: duplicate queue deliveries do not duplicate outbound emails (assuming ledger writes are strongly consistent).
+
+5. Failure modes handled  
+- Malformed payload -> immediately dead-letter.  
+- Transient send failures -> bounded retries + dead-letter after N attempts.  
+- Permanent send failures -> dead-letter.  
+- Ack failures after send -> treated as operationally visible and requeued; ledger prevents duplicate send.  
+- Concurrent duplicate processing -> controlled via processing claim state.
+
+6. Operational visibility  
+- Add metrics:
+  - `email_worker_malformed_total`
+  - `email_worker_send_retryable_total`
+  - `email_worker_send_permanent_total`
+  - `email_worker_dead_letter_total`
+  - `email_worker_ack_failure_total`
+  - `email_worker_ledger_inflight_count`
+  - `email_worker_duplicate_suppressed_total`
+- Alerts:
+  - sustained ack failures, increasing dead-letter rate, stale `PROCESSING` rows older than timeout.
+
+7. Tests / experiments  
+- Unit tests:
+  - malformed JSON -> dead-letter, no send call.  
+  - retryable send error -> queue nacks and retries with backoff.  
+  - permanent send error -> dead-letter after classification.  
+  - redelivery after send success + ack fail -> sender called once, second delivery acked/skipped.  
+- Integration/fault-injection:
+  - kill worker during send/ack windows.  
+  - inject queue ack latency/failures and SMTP timeouts.  
+  - verify ledger state transitions and queue visibility metrics.
+
+
+tokens used
+6,878
+
+
+exit_code: 0

@@ -1,0 +1,20 @@
+{
+  "case_id": "schema-migration-breaking-reader",
+  "category": "bad",
+  "mapping": {
+    "A": "control",
+    "B": "treatment"
+  },
+  "control_total": 7,
+  "treatment_total": 12,
+  "denominator": 12,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 5,
+  "normalized_lift": 0.41666666666666663,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Provides a correct additive migration shape (publishes both fields and supports fallback in consumer), which prevents the immediate breakage. However, it is narrowly focused on field compatibility and misses explicit operational/contract controls: no source-of-truth or rollout safety framing, limited validation, and no idempotency/duplicate-handling guidance.",
+  "treatment_rationale": "Delivers the same compatible dual-field migration, then explicitly addresses deployment reality for independently deployed readers, missing-field/invalid data failures, duplicate/retry safety, and transactional/ordering implications. Adds concrete validation and operational checks/tests, so it is both safer and more complete for rolling schema migration.",
+  "judge_rationale": "Response B is superior; it keeps backward compatibility while also covering correctness and operability dimensions (source-of-truth boundaries, failure behavior, idempotency guidance, and verification) that response A leaves unresolved."
+}

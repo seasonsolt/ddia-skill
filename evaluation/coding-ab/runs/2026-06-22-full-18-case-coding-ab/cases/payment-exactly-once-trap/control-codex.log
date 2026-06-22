@@ -1,0 +1,238 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/payment-exactly-once-trap/control-response.md -
+
+## stdout
+Your request in natural English: *Please review this Java payment worker code and propose a patch that safely handles timeouts and duplicate executions, and clearly state what guarantees are and are not provided.*
+
+### Review findings
+- `@Retryable` on the whole method can retry after `gateway.charge(...)` returns/throws, so a timeout can cause double charging and/or duplicate `markPaid`.
+- There is no coordination between workers, so two workers can charge the same invoice concurrently.
+- `markPaid(...)` is not idempotent with respect to retries or duplicate calls.
+
+### Recommended patch (core idea)
+Use a two-step worker lease + stable idempotency key:
+
+1. Atomically claim the invoice in DB before calling the gateway (PROCESSING lease).
+2. Use that same stored `attemptId` as gateway idempotency key.
+3. Make payment completion idempotent and only allow completion when lease matches current attempt.
+4. Never retry before an explicit lease/attempt is visible in DB.
+
+```java
+public final class PaymentWorker {
+    private static final Duration PAYMENT_LEASE_TTL = Duration.ofMinutes(5);
+
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+    private final Clock clock;
+
+    @Retryable(
+        maxAttempts = 3,
+        retryFor = {GatewayTimeoutException.class, GatewayTransientIOException.class},
+        noRetryFor = {InvoiceAlreadyPaidException.class}
+    )
+    public void payInvoice(UUID invoiceId) {
+        PaymentReservation reservation = invoices.reserveForPayment(invoiceId, PAYMENT_LEASE_TTL, clock.instant());
+
+        if (reservation.status() == PaymentReservation.Status.PAID) {
+            return;
+        }
+        if (reservation.status() == PaymentReservation.Status.HELD_BY_OTHER_WORKER) {
+            return;
+        }
+
+        UUID attemptId = reservation.attemptId();
+        Invoice invoice = reservation.invoice();
+
+        Charge charge;
+        try {
+            charge = gateway.charge(new ChargeRequest(
+                invoice.cardToken(),
+                invoice.amountCents(),
+                attemptId // stable idempotency key persisted by reservation
+            ));
+        } catch (GatewayTimeoutException | GatewayTransientIOException e) {
+            invoices.markTransientFailure(invoiceId, attemptId, e.getMessage());
+            throw e;
+        }
+
+        // Idempotent completion: safe if retried
+        invoices.markPaidIfCurrentAttempt(invoiceId, attemptId, charge.id());
+    }
+}
+```
+
+```java
+public interface InvoiceRepository {
+    PaymentReservation reserveForPayment(UUID invoiceId, Duration leaseTtl, Instant now);
+
+    // Atomically:
+    // - if PAID -> return Paid
+    // - if PROCESSING and lease not expired -> return HeldByOtherWorker
+    // - else set status=PROCESSING, attemptId=existingOrNew, leaseUntil=now+leaseTtl
+    // then return reservation(invoice, attemptId, state)
+
+    boolean markPaidIfCurrentAttempt(UUID invoiceId, UUID attemptId, String chargeId);
+    // SQL idea:
+    // UPDATE invoices
+    // SET status='PAID', charge_id=:chargeId, paid_at=now(), error=null
+    // WHERE id=:invoiceId AND status='PROCESSING' AND payment_attempt_id=:attemptId
+
+    void markTransientFailure(UUID invoiceId, UUID attemptId, String reason);
+}
+```
+
+### What this patch can guarantee
+- Prevents duplicate in-flight workers for the same invoice via DB lease/lock.
+- Prevents duplicate charges if `PaymentGateway` honors the idempotency key.
+- Makes `markPaid` idempotent for the same attempt.
+- On timeout retries, the same attempt key is reused, so repeated retries do not usually duplicate charging.
+
+### What this patch cannot guarantee
+- **Cannot guarantee exactly once** if the gateway does not support idempotent requests.
+- Cannot fully guarantee completion if the process crashes after external charge succeeds but before DB updates; you still need periodic reconciliation for that edge.
+- A very long network partition plus short lease TTL could allow lease takeover; final correctness then depends on gateway idempotency and repository checks.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7e-c051-74e0-a2fa-9a9928d6a3e8
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Control Instructions
+
+Answer the Java coding case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill. Review the code as a general Java backend coding task and provide the patch you would normally recommend.
+
+## Scenario
+
+A payment worker charges a card and then marks the invoice paid. The product manager asks for "exactly once payment" by wrapping the method in a retry annotation because the payment gateway sometimes times out.
+
+## Java Code
+
+```java
+public final class PaymentWorker {
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+
+    @Retryable(maxAttempts = 3)
+    public void payInvoice(UUID invoiceId) {
+        Invoice invoice = invoices.find(invoiceId);
+        Charge charge = gateway.charge(invoice.cardToken(), invoice.amountCents());
+        invoices.markPaid(invoiceId, charge.id());
+    }
+}
+```
+
+## Task
+
+Review the code and propose a patch that handles timeouts and duplicate worker execution. Be explicit about what guarantee the patch can and cannot provide.
+
+codex
+Your request in natural English: *Please review this Java payment worker code and propose a patch that safely handles timeouts and duplicate executions, and clearly state what guarantees are and are not provided.*
+
+### Review findings
+- `@Retryable` on the whole method can retry after `gateway.charge(...)` returns/throws, so a timeout can cause double charging and/or duplicate `markPaid`.
+- There is no coordination between workers, so two workers can charge the same invoice concurrently.
+- `markPaid(...)` is not idempotent with respect to retries or duplicate calls.
+
+### Recommended patch (core idea)
+Use a two-step worker lease + stable idempotency key:
+
+1. Atomically claim the invoice in DB before calling the gateway (PROCESSING lease).
+2. Use that same stored `attemptId` as gateway idempotency key.
+3. Make payment completion idempotent and only allow completion when lease matches current attempt.
+4. Never retry before an explicit lease/attempt is visible in DB.
+
+```java
+public final class PaymentWorker {
+    private static final Duration PAYMENT_LEASE_TTL = Duration.ofMinutes(5);
+
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+    private final Clock clock;
+
+    @Retryable(
+        maxAttempts = 3,
+        retryFor = {GatewayTimeoutException.class, GatewayTransientIOException.class},
+        noRetryFor = {InvoiceAlreadyPaidException.class}
+    )
+    public void payInvoice(UUID invoiceId) {
+        PaymentReservation reservation = invoices.reserveForPayment(invoiceId, PAYMENT_LEASE_TTL, clock.instant());
+
+        if (reservation.status() == PaymentReservation.Status.PAID) {
+            return;
+        }
+        if (reservation.status() == PaymentReservation.Status.HELD_BY_OTHER_WORKER) {
+            return;
+        }
+
+        UUID attemptId = reservation.attemptId();
+        Invoice invoice = reservation.invoice();
+
+        Charge charge;
+        try {
+            charge = gateway.charge(new ChargeRequest(
+                invoice.cardToken(),
+                invoice.amountCents(),
+                attemptId // stable idempotency key persisted by reservation
+            ));
+        } catch (GatewayTimeoutException | GatewayTransientIOException e) {
+            invoices.markTransientFailure(invoiceId, attemptId, e.getMessage());
+            throw e;
+        }
+
+        // Idempotent completion: safe if retried
+        invoices.markPaidIfCurrentAttempt(invoiceId, attemptId, charge.id());
+    }
+}
+```
+
+```java
+public interface InvoiceRepository {
+    PaymentReservation reserveForPayment(UUID invoiceId, Duration leaseTtl, Instant now);
+
+    // Atomically:
+    // - if PAID -> return Paid
+    // - if PROCESSING and lease not expired -> return HeldByOtherWorker
+    // - else set status=PROCESSING, attemptId=existingOrNew, leaseUntil=now+leaseTtl
+    // then return reservation(invoice, attemptId, state)
+
+    boolean markPaidIfCurrentAttempt(UUID invoiceId, UUID attemptId, String chargeId);
+    // SQL idea:
+    // UPDATE invoices
+    // SET status='PAID', charge_id=:chargeId, paid_at=now(), error=null
+    // WHERE id=:invoiceId AND status='PROCESSING' AND payment_attempt_id=:attemptId
+
+    void markTransientFailure(UUID invoiceId, UUID attemptId, String reason);
+}
+```
+
+### What this patch can guarantee
+- Prevents duplicate in-flight workers for the same invoice via DB lease/lock.
+- Prevents duplicate charges if `PaymentGateway` honors the idempotency key.
+- Makes `markPaid` idempotent for the same attempt.
+- On timeout retries, the same attempt key is reused, so repeated retries do not usually duplicate charging.
+
+### What this patch cannot guarantee
+- **Cannot guarantee exactly once** if the gateway does not support idempotent requests.
+- Cannot fully guarantee completion if the process crashes after external charge succeeds but before DB updates; you still need periodic reconciliation for that edge.
+- A very long network partition plus short lease TTL could allow lease takeover; final correctness then depends on gateway idempotency and repository checks.
+tokens used
+7,695
+
+
+exit_code: 0

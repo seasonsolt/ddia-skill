@@ -1,0 +1,36 @@
+{
+  "case_id": "missing-reconciliation-observability",
+  "category": "bad",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 11,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Strongly models search as derived state and replaces inline dual-write with an outbox-backed durable replay path, including bounded eventual consistency and explicit recovery semantics. It addresses key failure modes (crash, indexing outage, backlog) and adds observability plus tests/checks. Idempotency/retry safety is mostly present but less concrete on backoff/dead-letter strategy and exact worker concurrency safety."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 1,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 1,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 8,
+    "denominator": 12,
+    "pass": false,
+    "rationale": "Good concrete Java patch surface with outbox, retry scheduling, dead-lettering, and lag/backlog metrics. However it indexes directly in the request path and enqueues a snapshot on failure, which can still reapply stale data later and can regress docs after newer updates unless ordering/version enforcement is added. Source-of-truth intent is noted, but failure handling and idempotency are incomplete relative to derived-data reconciliation requirements."
+  },
+  "winner": "A",
+  "rationale": "Response A is better aligned with DDIA-derived-state recovery goals because it avoids the request-path indexing write as the recovery mechanism and makes replay from durable DB intent the primary path, while including reconciliation-minded verification. Response B is more concrete but has a real correctness gap (possible stale replay overwrite) and weaker observability/testing completeness, so it is lower overall."
+}

@@ -1,0 +1,36 @@
+{
+  "case_id": "order-outbox-missing",
+  "category": "bad",
+  "response_a": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 2,
+      "idempotency_retry_safety": 2,
+      "operational_verification": 2,
+      "java_patch_quality": 2,
+      "anti_pattern_resistance": null
+    },
+    "total": 12,
+    "denominator": 12,
+    "pass": true,
+    "rationale": "Strong complete outbox design: writes order + outbox in same DB transaction, publishes asynchronously with retry and SKIP LOCKED claim, and explicitly covers lost-event and duplicate-event failure modes. Includes metrics and concrete tests, and consumer-side idempotency guidance. Practical and aligned with required atomicity/recovery boundary."
+  },
+  "response_b": {
+    "scores": {
+      "correctness_invariant": 2,
+      "source_of_truth_boundary": 2,
+      "failure_mode_handling": 1,
+      "idempotency_retry_safety": 1,
+      "operational_verification": 1,
+      "java_patch_quality": 1,
+      "anti_pattern_resistance": null
+    },
+    "total": 8,
+    "denominator": 12,
+    "pass": false,
+    "rationale": "Correctly adopts transactional outbox and retrying publisher, but failure semantics are weaker: no demonstrated in-flight/claim transition, retry exhaustion throws and rolls back transaction, and no explicit dead-letter/state transition or operational checks/tests. Idempotency is only hinted by eventKey. Patch is mostly workable but has avoidable correctness/robustness gaps."
+  },
+  "winner": "A",
+  "rationale": "A improved: it addresses both lost and duplicate delivery paths more completely, includes stronger failure handling, observability, and testing guidance. B is partially correct but less robust and less operationally complete."
+}

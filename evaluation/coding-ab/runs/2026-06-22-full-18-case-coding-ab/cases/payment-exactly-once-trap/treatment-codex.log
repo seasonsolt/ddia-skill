@@ -1,0 +1,364 @@
+$ codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.3-codex-spark -c model_reasoning_effort="high" -C /Users/Thin/Source/git/seasonsolt/ddia-skill -o /Users/Thin/Source/git/seasonsolt/ddia-skill/evaluation/coding-ab/runs/2026-06-22-full-18-case-coding-ab/cases/payment-exactly-once-trap/treatment-response.md -
+
+## stdout
+Your message in idiomatic English: “Can you review this Java payment worker and suggest the smallest patch that safely handles gateway timeouts and duplicate execution, while being clear about what correctness guarantees are possible?”
+
+## 1) Assumptions and workload shape
+- A single invoice can be charged once and should only create one successful upstream charge.
+- Workers may run more than once for the same invoice due to retries (`@Retryable`) and concurrent workers.
+- Gateway calls can timeout after side effects have already happened.
+
+## 2) What is wrong in the current code
+- `gateway.charge(...)` and `invoices.markPaid(...)` are two separate systems with no atomic boundary.
+- A timeout after a successful charge can cause duplicate charging on retry.
+- `@Retryable` retries the whole method, but without idempotency, duplicates are expected.
+- No state machine/claiming guard around concurrent executions, so duplicate workers can race.
+
+This is a distributed data consistency issue because the DB state (“paid”) and payment system side effects (“charge created”) can diverge and be replayed.
+
+## 3) Smallest practical patch
+Make the invoice row a payment state machine and use an idempotency key for the gateway.
+
+### Patch idea (minimal)
+- Add one payment attempt key + status columns (or reuse existing columns):  
+  `paymentRequestId`, `paymentState` (`OPEN`, `CHARGING`, `PAID`), and `gatewayChargeId`.
+- Claim payment in DB before calling the gateway (single state transition).
+- Call gateway with a stable idempotency key.
+- Mark paid only if claim state matches expected values.
+- Only retry on transient gateway/network errors.
+
+```java
+public final class PaymentWorker {
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+
+    @Transactional
+    @Retryable(
+        maxAttempts = 3,
+        retryFor = { PaymentTimeoutException.class, TransientIoException.class },
+        noRetryFor = { IllegalArgumentException.class }
+    )
+    public void payInvoice(UUID invoiceId) {
+        Invoice invoice = invoices.findForUpdate(invoiceId)
+            .orElseThrow(() -> new IllegalArgumentException("Invoice not found"));
+
+        if (invoice.isPaid()) return;
+
+        // Deterministic idempotency key (at least per invoice; can be per attempt token if needed)
+        String idempotencyKey = invoice.getPaymentRequestId() != null
+            ? invoice.getPaymentRequestId()
+            : invoiceId.toString();
+
+        if (invoice.getPaymentRequestId() == null) {
+            boolean claimed = invoices.tryStartPayment(invoiceId, idempotencyKey); // atomic transition OPEN -> CHARGING
+            if (!claimed) {
+                Invoice latest = invoices.get(invoiceId);
+                if (latest.isPaid()) return;
+                throw new RetryableInProgressException(invoiceId);
+            }
+        } else if (invoice.isCharging() && invoice.getGatewayChargeId() != null) {
+            return; // previous successful charge got recorded with same key
+        }
+
+        Charge charge = gateway.charge(
+            invoice.cardToken(),
+            invoice.amountCents(),
+            idempotencyKey
+        );
+
+        boolean marked = invoices.markPaidIfCharging(invoiceId, idempotencyKey, charge.id()); // only from CHARGING+matching key
+        if (!marked) {
+            throw new IllegalStateException("Invoice state changed while charging");
+        }
+    }
+}
+```
+
+Repository method intent:
+- `findForUpdate`: select invoice `FOR UPDATE`.
+- `tryStartPayment`: `UPDATE ... SET state='CHARGING', paymentRequestId=? WHERE id=? AND state='OPEN'`.
+- `markPaidIfCharging`: `UPDATE ... SET state='PAID', gatewayChargeId=? WHERE id=? AND state='CHARGING' AND paymentRequestId=?`.
+
+## 4) Consistency, source of truth, and transaction boundaries
+- Source of truth for invoice outcome: your invoice DB row (`state`, `gatewayChargeId`).
+- Gateway is authoritative for actual money movement and must be queried/reconciled when state is ambiguous.
+- DB transaction can protect claim + read-modify-write of invoice state, but cannot include gateway call; that is the fundamental split-brain point.
+
+## 5) Guarantees this patch provides / does not provide
+- What it can provide:
+  - At-most-once charge attempts on the gateway if the gateway respects idempotency keys.
+  - At-most-once DB-marked payment per invoice under normal retries and concurrent duplicates.
+  - Deterministic handling of duplicate/replayed `payInvoice` calls.
+- What it cannot provide:
+  - Absolute “exactly-once” in a distributed boundary (network + crash + timeout windows).
+  - If gateway does not enforce idempotency, duplicate charges remain possible without extra external reconciliation.
+
+## 6) Failure modes and operational visibility
+- Failure mode: timeout right after charge success, before DB update  
+  → retry reuses same idempotency key; gateway returns existing charge or deduplicates.
+- Failure mode: crash after claim, before charge  
+  → invoice remains `CHARGING`; needs recovery path.
+- Failure mode: stale `CHARGING` lock for long time  
+  → detect and alert on aged `CHARGING` rows.
+
+Operational signals:
+- `payment_claim_conflict_total`
+- `gateway_charge_retries_total` by cause
+- `gateway_charge_idempotent_reused_total`
+- `invoice_stuck_charging_count` (age > threshold)
+- `markPaid_if_charging_miss_total` (state divergence indicator)
+
+## 7) Tests to validate
+- Unit/integration: duplicate retry after timeout does not create second successful charge (`gateway` called once, or twice-but-deduped by key).
+- Concurrent worker test: two threads call `payInvoice` for same invoice; only one transitions to `PAID`.
+- Timeout-before-mark test: simulate timeout after successful gateway call; retry should not create extra charge and eventually marks paid.
+- Recovery test: simulate crash after claim but before charge; reconciliation/monitoring surfaces stale `CHARGING` and recovers deterministically.
+
+If you want, I can provide a compact “drop-in” version tailored exactly to your current `Invoice` fields and repository API signatures.
+
+
+## stderr
+OpenAI Codex v0.141.0
+--------
+workdir: /Users/Thin/Source/git/seasonsolt/ddia-skill
+model: gpt-5.3-codex-spark
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019eef7e-f2e4-7c51-b687-6601f5c58c9b
+--------
+user
+You are participating in a coding A/B benchmark.
+
+Do not edit files, do not run commands, and do not mention this benchmark setup.
+
+Produce the answer only.
+
+# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the review around assumptions, source of truth, consistency guarantees, transaction boundaries, idempotency, failure modes, operational visibility, and tests. The answer should still be practical Java guidance: identify the bug, explain why it is a distributed data problem, and propose the smallest patch that improves correctness without claiming impossible guarantees.
+
+# ddia-system-design skill instructions
+
+---
+name: ddia-system-design
+description: Apply Designing Data-Intensive Applications inspired architecture reasoning for backend engineering and system design. Use when reviewing or designing data-intensive systems, database choices, storage/indexing, replication, partitioning, transactions, isolation levels, distributed faults, consistency, consensus, batch processing, stream processing, derived data, correctness, reliability, scalability, maintainability, or operational trade-offs.
+---
+
+# DDIA System Design
+
+Use this skill to turn a backend architecture question into explicit workload assumptions, data model choices, consistency requirements, failure modes, and verification steps.
+
+## Core Workflow
+
+1. Frame the system goal in terms of data, users, writes, reads, latency, durability, and operational ownership.
+2. Name the workload before choosing tools: request rate, data size, hot keys, fan-out, read/write ratio, freshness needs, and recovery objectives.
+3. Separate facts from choices: required correctness guarantees, acceptable staleness, acceptable data loss, and business-visible failure behavior.
+4. Analyze the design through four lenses: reliability, scalability, maintainability, and evolvability.
+5. Surface trade-offs explicitly. Do not recommend a database, queue, cache, or consensus mechanism without explaining the cost.
+6. Convert abstract guarantees into tests, observability signals, and runbook checks.
+
+## Load References Selectively
+
+- Read `references/topic-map.md` when mapping a user problem to relevant DDIA themes.
+- Read `references/system-design-principles.md` when making or reviewing architecture decisions.
+- Read `references/architecture-review-checklists.md` when the user asks for a review, critique, design doc, or failure-mode analysis.
+
+## Response Shape
+
+Prefer this structure unless the user asks for a different format:
+
+1. Assumptions and workload shape
+2. Recommendation
+3. Key trade-offs
+4. Failure modes
+5. Consistency and correctness implications
+6. Operational checks
+7. Tests or experiments to validate the design
+
+For narrow follow-ups or single-question prompts, only the relevant sections
+are required. Do not pad an answer with empty sections to match the full shape.
+
+## Worked Example
+
+User: "We want to cache product detail pages in Redis. Is that safe?"
+
+- Assumptions and workload shape: product data changes a few thousand times per
+  day; reads are high; the user has not stated a freshness bound or source of
+  truth.
+- Recommendation: Redis cache-aside is reasonable if PostgreSQL stays the source
+  of truth and the freshness bound is explicit. Ask for the acceptable stale
+  window before committing.
+- Key trade-offs: TTL is simple but can serve stale data until expiry;
+  invalidation is precise but couples the write path to the cache.
+- Failure modes: cache loss, stale price after an update, cache stampede on a
+  hot key, and PostgreSQL fallback load when Redis is down.
+- Consistency and correctness implications: price and inventory fields are
+  correctness-sensitive; descriptive fields tolerate staleness.
+- Operational checks: cache hit rate, invalidation rate, stale-read reports,
+  fallback rate, and Redis memory pressure.
+- Tests: stale read after update, Redis flush, hot-key stampede, and fallback
+  under PostgreSQL load.
+
+## Out Of Scope
+
+Do not use this skill for: pure algorithm problems, single-machine CRUD
+services with no distributed state, frontend component or styling choices, or
+DevOps tooling selection without a data or consistency component.
+
+## Guardrails
+
+- Ask for missing workload and correctness requirements before making a strong recommendation.
+- Avoid one-size-fits-all answers such as always using Kafka, microservices, NoSQL, or strong consistency.
+- Treat caches, indexes, replicas, materialized views, and streams as derived data that can become stale or incorrect.
+- Discuss human operations: deployment, recovery, backfills, schema evolution, monitoring, and incident response.
+- Keep direct book quotations out of responses unless the user explicitly asks for a short cited quote.
+
+## Scenario
+
+A payment worker charges a card and then marks the invoice paid. The product manager asks for "exactly once payment" by wrapping the method in a retry annotation because the payment gateway sometimes times out.
+
+## Java Code
+
+```java
+public final class PaymentWorker {
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+
+    @Retryable(maxAttempts = 3)
+    public void payInvoice(UUID invoiceId) {
+        Invoice invoice = invoices.find(invoiceId);
+        Charge charge = gateway.charge(invoice.cardToken(), invoice.amountCents());
+        invoices.markPaid(invoiceId, charge.id());
+    }
+}
+```
+
+## Task
+
+Review the code and propose a patch that handles timeouts and duplicate worker execution. Be explicit about what guarantee the patch can and cannot provide.
+
+codex
+Your message in idiomatic English: “Can you review this Java payment worker and suggest the smallest patch that safely handles gateway timeouts and duplicate execution, while being clear about what correctness guarantees are possible?”
+
+## 1) Assumptions and workload shape
+- A single invoice can be charged once and should only create one successful upstream charge.
+- Workers may run more than once for the same invoice due to retries (`@Retryable`) and concurrent workers.
+- Gateway calls can timeout after side effects have already happened.
+
+## 2) What is wrong in the current code
+- `gateway.charge(...)` and `invoices.markPaid(...)` are two separate systems with no atomic boundary.
+- A timeout after a successful charge can cause duplicate charging on retry.
+- `@Retryable` retries the whole method, but without idempotency, duplicates are expected.
+- No state machine/claiming guard around concurrent executions, so duplicate workers can race.
+
+This is a distributed data consistency issue because the DB state (“paid”) and payment system side effects (“charge created”) can diverge and be replayed.
+
+## 3) Smallest practical patch
+Make the invoice row a payment state machine and use an idempotency key for the gateway.
+
+### Patch idea (minimal)
+- Add one payment attempt key + status columns (or reuse existing columns):  
+  `paymentRequestId`, `paymentState` (`OPEN`, `CHARGING`, `PAID`), and `gatewayChargeId`.
+- Claim payment in DB before calling the gateway (single state transition).
+- Call gateway with a stable idempotency key.
+- Mark paid only if claim state matches expected values.
+- Only retry on transient gateway/network errors.
+
+```java
+public final class PaymentWorker {
+    private final PaymentGateway gateway;
+    private final InvoiceRepository invoices;
+
+    @Transactional
+    @Retryable(
+        maxAttempts = 3,
+        retryFor = { PaymentTimeoutException.class, TransientIoException.class },
+        noRetryFor = { IllegalArgumentException.class }
+    )
+    public void payInvoice(UUID invoiceId) {
+        Invoice invoice = invoices.findForUpdate(invoiceId)
+            .orElseThrow(() -> new IllegalArgumentException("Invoice not found"));
+
+        if (invoice.isPaid()) return;
+
+        // Deterministic idempotency key (at least per invoice; can be per attempt token if needed)
+        String idempotencyKey = invoice.getPaymentRequestId() != null
+            ? invoice.getPaymentRequestId()
+            : invoiceId.toString();
+
+        if (invoice.getPaymentRequestId() == null) {
+            boolean claimed = invoices.tryStartPayment(invoiceId, idempotencyKey); // atomic transition OPEN -> CHARGING
+            if (!claimed) {
+                Invoice latest = invoices.get(invoiceId);
+                if (latest.isPaid()) return;
+                throw new RetryableInProgressException(invoiceId);
+            }
+        } else if (invoice.isCharging() && invoice.getGatewayChargeId() != null) {
+            return; // previous successful charge got recorded with same key
+        }
+
+        Charge charge = gateway.charge(
+            invoice.cardToken(),
+            invoice.amountCents(),
+            idempotencyKey
+        );
+
+        boolean marked = invoices.markPaidIfCharging(invoiceId, idempotencyKey, charge.id()); // only from CHARGING+matching key
+        if (!marked) {
+            throw new IllegalStateException("Invoice state changed while charging");
+        }
+    }
+}
+```
+
+Repository method intent:
+- `findForUpdate`: select invoice `FOR UPDATE`.
+- `tryStartPayment`: `UPDATE ... SET state='CHARGING', paymentRequestId=? WHERE id=? AND state='OPEN'`.
+- `markPaidIfCharging`: `UPDATE ... SET state='PAID', gatewayChargeId=? WHERE id=? AND state='CHARGING' AND paymentRequestId=?`.
+
+## 4) Consistency, source of truth, and transaction boundaries
+- Source of truth for invoice outcome: your invoice DB row (`state`, `gatewayChargeId`).
+- Gateway is authoritative for actual money movement and must be queried/reconciled when state is ambiguous.
+- DB transaction can protect claim + read-modify-write of invoice state, but cannot include gateway call; that is the fundamental split-brain point.
+
+## 5) Guarantees this patch provides / does not provide
+- What it can provide:
+  - At-most-once charge attempts on the gateway if the gateway respects idempotency keys.
+  - At-most-once DB-marked payment per invoice under normal retries and concurrent duplicates.
+  - Deterministic handling of duplicate/replayed `payInvoice` calls.
+- What it cannot provide:
+  - Absolute “exactly-once” in a distributed boundary (network + crash + timeout windows).
+  - If gateway does not enforce idempotency, duplicate charges remain possible without extra external reconciliation.
+
+## 6) Failure modes and operational visibility
+- Failure mode: timeout right after charge success, before DB update  
+  → retry reuses same idempotency key; gateway returns existing charge or deduplicates.
+- Failure mode: crash after claim, before charge  
+  → invoice remains `CHARGING`; needs recovery path.
+- Failure mode: stale `CHARGING` lock for long time  
+  → detect and alert on aged `CHARGING` rows.
+
+Operational signals:
+- `payment_claim_conflict_total`
+- `gateway_charge_retries_total` by cause
+- `gateway_charge_idempotent_reused_total`
+- `invoice_stuck_charging_count` (age > threshold)
+- `markPaid_if_charging_miss_total` (state divergence indicator)
+
+## 7) Tests to validate
+- Unit/integration: duplicate retry after timeout does not create second successful charge (`gateway` called once, or twice-but-deduped by key).
+- Concurrent worker test: two threads call `payInvoice` for same invoice; only one transitions to `PAID`.
+- Timeout-before-mark test: simulate timeout after successful gateway call; retry should not create extra charge and eventually marks paid.
+- Recovery test: simulate crash after claim but before charge; reconciliation/monitoring surfaces stale `CHARGING` and recovers deterministically.
+
+If you want, I can provide a compact “drop-in” version tailored exactly to your current `Invoice` fields and repository API signatures.
+tokens used
+5,564
+
+
+exit_code: 0

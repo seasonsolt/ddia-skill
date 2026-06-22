@@ -1,0 +1,423 @@
+{
+  "metadata": {
+    "model": "gpt-5.3-codex-spark",
+    "reasoning_effort": "high",
+    "commit": "30911d6",
+    "seed": "ddia-coding-ab-2026-06-22"
+  },
+  "aggregate": {
+    "cases": 18,
+    "control_total": 151,
+    "treatment_total": 202,
+    "max_total": 226,
+    "lift": 51,
+    "control_normalized": 0.668141592920354,
+    "treatment_normalized": 0.8938053097345132,
+    "normalized_lift": 0.22566371681415928,
+    "control_passes": 4,
+    "treatment_passes": 15,
+    "treatment_wins": 15,
+    "control_wins": 2,
+    "ties": 1,
+    "judge_treatment_wins": 15,
+    "judge_control_wins": 2,
+    "judge_ties": 1,
+    "by_category": {
+      "bad": {
+        "cases": 9,
+        "control_total": 64,
+        "treatment_total": 102,
+        "max_total": 108,
+        "control_passes": 0,
+        "treatment_passes": 9,
+        "treatment_wins": 9,
+        "control_wins": 0,
+        "ties": 0
+      },
+      "adversarial": {
+        "cases": 5,
+        "control_total": 44,
+        "treatment_total": 57,
+        "max_total": 70,
+        "control_passes": 1,
+        "treatment_passes": 2,
+        "treatment_wins": 4,
+        "control_wins": 1,
+        "ties": 0
+      },
+      "good": {
+        "cases": 4,
+        "control_total": 43,
+        "treatment_total": 43,
+        "max_total": 48,
+        "control_passes": 3,
+        "treatment_passes": 4,
+        "treatment_wins": 2,
+        "control_wins": 1,
+        "ties": 1
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "checkout-cache-as-truth",
+      "category": "bad",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 5,
+      "treatment_total": 10,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 5,
+      "normalized_lift": 0.4166666666666667,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Patch improves behavior for caught DB failures and adds retry guards, but remains Redis-led for both stock and idempotency with no durable invariant in DB for authoritative stock. It does not address crash ambiguity after successful DB insert or before success marker persistence and can still produce duplicate/conflicted outcomes under failures. Tests are present but do not validate the key ambiguity/recovery boundary.",
+      "treatment_rationale": "Good practical direction: identifies split-brain failure, adds Redis reservation marker with guarded release, adds DB-level idempotency key uniqueness, and proposes meaningful crash/retry/concurrency tests. It is still partial on the source-of-truth invariant because it does not show the durable Postgres inventory mutation path in the critical section, so no hard guarantee in the crash window until reconciliation/reclaimer.",
+      "judge_rationale": "Response A is materially stronger: it introduces a reservation+idempotency workflow and more complete failure handling assumptions/tests, whereas Response B mainly adds best-effort rollback in Redis and falls short on source-of-truth correctness and retry safety under crash ambiguity."
+    },
+    {
+      "case_id": "elasticsearch-authorization-trap",
+      "category": "adversarial",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 7,
+      "treatment_total": 11,
+      "denominator": 14,
+      "control_pass": false,
+      "treatment_pass": false,
+      "lift": 4,
+      "normalized_lift": 0.2857142857142857,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Keeps index as the authorization source and uses eventual+primary-fresh retry instead of a durable fallback, which is an anti-pattern for this case. It improves stale-window behavior and observability partially, but does not separate enforcement from derived-index candidate retrieval and can still misauthorize. Missing hardening for search exceptions and no source-of-truth check further weakens correctness.",
+      "treatment_rationale": "Stronger recognition of derived-index trap: introduces a PermissionRepository authoritative path and handles empty/ambiguous/error cases via fallback, plus concrete metrics/tests. Still falls short of full correctness because the fast path can still grant directly from index without mandatory freshness/version validation, so index-derived allow remains possible after permission churn.",
+      "judge_rationale": "A is materially better because it explicitly shifts authority to a durable permission repository on ambiguity/miss/error and treats the index as non-authoritative in those cases; B remains index-authoritative despite retries and therefore violates the central boundary requirement."
+    },
+    {
+      "case_id": "good-cache-aside-product-preview",
+      "category": "good",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 11,
+      "treatment_total": 12,
+      "denominator": 12,
+      "control_pass": true,
+      "treatment_pass": true,
+      "lift": 1,
+      "normalized_lift": 0.08333333333333337,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Generally good and practical, with defensive coding and observability, but the negative-cache branch is ineffective because the marker is not used to short-circuit DB fallback (`MISSING_MARKER` still leads to DB lookup), so one stated issue remains unresolved. Some added structure is clean, but this weakens patch completeness.",
+      "treatment_rationale": "Strong: keeps Postgres as source of truth, treats Redis as non-authoritative cache, fails open on Redis/JSON failures, handles missing product safely, and discusses TTL/staleness/invalidation expectations. Operational checks are relevant to preview staleness and cache health, and failure modes are concretely covered.",
+      "judge_rationale": "Response A is stronger because it aligns more directly with DDIA requirements for derived-data caching correctness and fail-open behavior while avoiding unnecessary cache-dependence and preserving clear source-of-truth boundaries."
+    },
+    {
+      "case_id": "good-expand-contract-schema-rollout",
+      "category": "good",
+      "mapping": {
+        "A": "control",
+        "B": "treatment"
+      },
+      "control_total": 9,
+      "treatment_total": 10,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 1,
+      "normalized_lift": 0.08333333333333337,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Keeps `full_name` dual-write and adds fallback reads, which is a safe compatibility move, and includes useful rollout metrics/checks. It is weaker on mixed-version correctness guarantees because it does not clearly define backfill/old-reader retirement or rollback/contract preconditions, and idempotency concerns around parsing normalization are only partially addressed.",
+      "treatment_rationale": "Also keeps compatibility via dual-write and reader reconstruction and adds broader operational guardrails, including version-aware rollout gating, mixed-writer/rollback and parser edge-case discussions, and concrete verification tests. It is still limited by not explicitly adding a full backfill plan, and idempotency is discussed conceptually more than enforced in code, but overall reasoning is broader and better aligned with mixed-version safety.",
+      "judge_rationale": "Both responses recognize dual-write is required during rollout; Response B is stronger on failure-mode analysis and operational/runbook detail, including recovery and rollout checks, while still preserving the same Java safety direction. The only notable gap is explicit backfill planning, but B handles operational risk more comprehensively."
+    },
+    {
+      "case_id": "good-outbox-relay-idempotent-consumer",
+      "category": "good",
+      "mapping": {
+        "A": "control",
+        "B": "treatment"
+      },
+      "control_total": 12,
+      "treatment_total": 10,
+      "denominator": 12,
+      "control_pass": true,
+      "treatment_pass": true,
+      "lift": -2,
+      "normalized_lift": -0.16666666666666663,
+      "score_winner": "control",
+      "judge_winner": "control",
+      "control_rationale": "A correctly preserves the outbox handoff and transactionality, explicitly rejects direct request-path Kafka publishing, and gives concrete operational checks for relay lag, retries, and duplicate drops. It also calls out the key idempotency/dedupe constraints and includes practical relay/monitoring guidance aligned with at-least-once semantics.",
+      "treatment_rationale": "B gives mostly correct architectural reasoning and good failure-mode checks, but its patch weakens the core invariant by omitting the transactional boundary on order+outbox writes in the shown code, which undermines the atomic handoff guarantee. The rest is solid on idempotency and operational checks but the Java patch is less complete.",
+      "judge_rationale": "Response A is stronger and less risky: it keeps and reinforces the atomic outbox pattern, avoids the transactional hole introduced in B, and provides fuller implementation-level controls for publication and observability. Response B is directionally correct but loses points on correctness due to the missing request-path transaction in its patch."
+    },
+    {
+      "case_id": "good-replica-session-token-routing",
+      "category": "good",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 11,
+      "treatment_total": 11,
+      "denominator": 12,
+      "control_pass": true,
+      "treatment_pass": true,
+      "lift": 0,
+      "normalized_lift": 0.0,
+      "score_winner": "tie",
+      "judge_winner": "tie",
+      "control_rationale": "Also preserves the intended design and adds meaningful hardening: input validation, explicit fallback helper, and clearer observability proposals including circuit-breaking/throttle signals. However, idempotency/retry behavior is still only implied, not engineered (e.g., update deduplication). A small risk of over-strict defensive checks (for invalid versions/version-regression) is present but not a major correctness failure.",
+      "treatment_rationale": "Strongly aligns with expected session-token pattern: keeps replica-first reads with bounded primary fallback, and explicitly handles replica miss/lag via minVersion. Operational checks are practical and include the right lag/fallback metrics and fault-injection tests. Weakest point is idempotency/retry safety: it calls out duplicate-write risks but does not propose concrete idempotency logic.",
+      "judge_rationale": "Both answers correctly recommend the DDIA-appropriate solution (replica-first with version-gated fallback to primary) and provide solid Java + operational coverage. Neither demonstrates a clear quality edge in the scored dimensions beyond minor presentation/rigor differences, so they tie."
+    },
+    {
+      "case_id": "hot-partition-tenant-counter",
+      "category": "bad",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 8,
+      "treatment_total": 11,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 3,
+      "normalized_lift": 0.25,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Correctly applies shard-key fan-out and exact batch read summation, but treats reads as exact without discussing staleness/derived-state semantics and provides almost no operational failure diagnostics. No retry/backoff policy or explicit handling of throttled writes; no idempotency discussion; verification guidance is minimal.",
+      "treatment_rationale": "Strong: shards writes by random bucket and aggregates reads with pagination, directly addressing the hot partition. Explicitly names per-tenant derived totals and adds bounded retry/monitoring checks and read consistency caveats. Main weakness is retry semantics: bounded retries can overcount without idempotency keys, so idempotency safety is partial.",
+      "judge_rationale": "Response A is clearly superior: it is more complete on boundary reasoning, read/write scaling behavior, and operational checks, while B is a mostly mechanical sharding patch with weaker failure/idempotency handling and minimal verification guidance."
+    },
+    {
+      "case_id": "kafka-total-ordering-trap",
+      "category": "adversarial",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 10,
+      "treatment_total": 13,
+      "denominator": 14,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 3,
+      "normalized_lift": 0.2142857142857143,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Corrects the read-before-write race with optimistic CAS update and handles duplicates. However, it does not explicitly ground the source-of-truth boundary as clearly, and it treats gaps by immediate sinking without a full pending/replay recovery mechanism. Operational checks are minimal, and retry safety is only partially covered by a small CAS retry loop plus out-of-order sinking.",
+      "treatment_rationale": "Strongly enforces account-local ordering with a durable CAS-style conditional update (expected previous sequence) and explicitly avoids relying on Kafka offset/global ordering. It adds duplicate/replay handling and an explicit gap/out-of-order path with pending + operational controls. Source-of-truth is correctly rooted in DB state plus immutable stream. Idempotency/retry is partially specified (pending and duplicates) but automatic retry/settlement path is not fully closed in patch.",
+      "judge_rationale": "Response A is stronger overall: it combines per-account ordering assumptions with durable conditional write semantics and operationalized failure handling (including pending/gap strategy, migration deployment risks, and richer observability). Response B is solid on the core CAS fix but is less complete on source-of-truth clarity, gap recovery, and verification depth."
+    },
+    {
+      "case_id": "missing-reconciliation-observability",
+      "category": "bad",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 8,
+      "treatment_total": 11,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 3,
+      "normalized_lift": 0.25,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Good concrete Java patch surface with outbox, retry scheduling, dead-lettering, and lag/backlog metrics. However it indexes directly in the request path and enqueues a snapshot on failure, which can still reapply stale data later and can regress docs after newer updates unless ordering/version enforcement is added. Source-of-truth intent is noted, but failure handling and idempotency are incomplete relative to derived-data reconciliation requirements.",
+      "treatment_rationale": "Strongly models search as derived state and replaces inline dual-write with an outbox-backed durable replay path, including bounded eventual consistency and explicit recovery semantics. It addresses key failure modes (crash, indexing outage, backlog) and adds observability plus tests/checks. Idempotency/retry safety is mostly present but less concrete on backoff/dead-letter strategy and exact worker concurrency safety.",
+      "judge_rationale": "Response A is better aligned with DDIA-derived-state recovery goals because it avoids the request-path indexing write as the recovery mechanism and makes replay from durable DB intent the primary path, while including reconciliation-minded verification. Response B is more concrete but has a real correctness gap (possible stale replay overwrite) and weaker observability/testing completeness, so it is lower overall."
+    },
+    {
+      "case_id": "multi-region-last-write-wins-profile",
+      "category": "adversarial",
+      "mapping": {
+        "A": "control",
+        "B": "treatment"
+      },
+      "control_total": 6,
+      "treatment_total": 9,
+      "denominator": 14,
+      "control_pass": false,
+      "treatment_pass": false,
+      "lift": 3,
+      "normalized_lift": 0.21428571428571436,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Adds deterministic tie-breaking over timestamps but keeps blanket whole-object last-write-wins semantics. Still relies on mutable wall-clock ordering as primary truth and can silently drop concurrent independent edits. It introduces no causal metadata workflow, no explicit conflict retention, and no user-facing conflict handling. Tests exist but do not validate merge-safe behavior for field-level conflicts; one comparator helper in tests appears inconsistent (uses nonexistent accessor methods on ProfileMeta), which also weakens patch quality. Fails adversarial anti-pattern bar.",
+      "treatment_rationale": "Moves decision key off raw timestamps, explicitly acknowledges wall-clock is unreliable, and proposes persisted revision/tiebreak metadata with transactional write ordering and replay handling. This is materially stronger on operational semantics and failure handling than A, and aligns better with source-of-truth flow. However, resolver still enforces single-winner profile-wide LWW and does not preserve per-field merges or explicit unresolved-conflict records, so product correctness for concurrent independent edits remains incomplete. Operational verification is described but not implemented as executable tests, and idempotency support is partly procedural rather than embedded in patch code.",
+      "judge_rationale": "Response B is superior overall: it better handles cross-region concurrency risks and operational failure modes with durable metadata and explicit caveats, while Response A remains mostly timestamp-based whole-object LWW. Neither reaches full adversarial pass because anti-pattern resistance is below 2 and neither preserves mergeable field-level correctness or explicit conflict states."
+    },
+    {
+      "case_id": "order-outbox-missing",
+      "category": "bad",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 8,
+      "treatment_total": 12,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 4,
+      "normalized_lift": 0.33333333333333337,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Correctly adopts transactional outbox and retrying publisher, but failure semantics are weaker: no demonstrated in-flight/claim transition, retry exhaustion throws and rolls back transaction, and no explicit dead-letter/state transition or operational checks/tests. Idempotency is only hinted by eventKey. Patch is mostly workable but has avoidable correctness/robustness gaps.",
+      "treatment_rationale": "Strong complete outbox design: writes order + outbox in same DB transaction, publishes asynchronously with retry and SKIP LOCKED claim, and explicitly covers lost-event and duplicate-event failure modes. Includes metrics and concrete tests, and consumer-side idempotency guidance. Practical and aligned with required atomicity/recovery boundary.",
+      "judge_rationale": "A improved: it addresses both lost and duplicate delivery paths more completely, includes stronger failure handling, observability, and testing guidance. B is partially correct but less robust and less operationally complete."
+    },
+    {
+      "case_id": "payment-exactly-once-trap",
+      "category": "adversarial",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 8,
+      "treatment_total": 13,
+      "denominator": 14,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 5,
+      "normalized_lift": 0.3571428571428572,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Uses a reasonable lease+attempt design and correctly rejects absolute exactly-once guarantees, but leaves an important control-flow gap: retries can be short-circuited while PROCESSING without a clear forward-recovery step, so completion can stall. Idempotency and attempt matching are present yet not strongly closed (no check of markPaid result). Lacks concrete operational verification artifacts beyond brief textual caveats.",
+      "treatment_rationale": "Strong end-to-end reasoning and correct framing: separates external gateway side effects from DB state, stores claim/state before gateway call, uses idempotency key, and makes payment completion conditional. Explicitly avoids claiming exact-once. Operational checks and recovery/monitoring suggestions are present. Patch is practical but not fully production-polished (transaction annotation still spans external call and recovery write path is described rather than fully implemented).",
+      "judge_rationale": "Response A is stronger overall: it is clearer about distributed split-brain limitations, provides more complete state-transition handling and explicit observability/tests, and offers a more directly safe retry path for duplicate invocations."
+    },
+    {
+      "case_id": "profile-replica-lag",
+      "category": "bad",
+      "mapping": {
+        "A": "control",
+        "B": "treatment"
+      },
+      "control_total": 8,
+      "treatment_total": 10,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 2,
+      "normalized_lift": 0.16666666666666674,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Identifies replica lag and read-your-writes correctly, and uses a version/timestamp marker to prefer replica while falling back to primary, so correctness is mostly addressed. However, it introduces a synchronous fixed-delay retry loop on replicas, which is brittle and still partially heuristic, and offers no explicit validation/metrics/testing beyond code changes; the patch quality is weakened by the sleep-based polling and incomplete operational guidance.",
+      "treatment_rationale": "Directly enforces read-your-writes for the write API by reading back from primary (or returning updated row if available), which cleanly matches the DDIA boundary for this request without routing all traffic to primary. It includes practical reasoning about asynchronous replica staleness, failure behavior, idempotency, and concrete operational checks/tests, while the Java patch is minimal and clearly correct for the stated goal.",
+      "judge_rationale": "Response B scores higher because it gives a simpler, production-safe read-your-writes fix with stronger operational guidance and avoids the polling/sleep anti-pattern, while preserving replica use for normal read traffic."
+    },
+    {
+      "case_id": "redis-distributed-lock-money-transfer",
+      "category": "adversarial",
+      "mapping": {
+        "A": "control",
+        "B": "treatment"
+      },
+      "control_total": 13,
+      "treatment_total": 11,
+      "denominator": 14,
+      "control_pass": true,
+      "treatment_pass": false,
+      "lift": -2,
+      "normalized_lift": -0.1428571428571429,
+      "score_winner": "control",
+      "judge_winner": "control",
+      "control_rationale": "Strong shift of correctness to DB transaction + row-level locks and durable idempotency state; added validation and deterministic dual lock ordering. Main gap is missing concrete operational verification (no tests/metrics), but core money-movement semantics are mostly sound under retries/crash/pause scenarios.",
+      "treatment_rationale": "Solid reasoning and good observability/fault-injection testing guidance, but includes a concrete bug in lock key derivation (`second` can equal `first`) and limited input validation, which weakens patch quality and leaves concurrency/progress behavior less reliable than it should be.",
+      "judge_rationale": "Response A is superior overall: it is more patch-correct and maintains stronger correctness posture for transfer execution, while Response B has a tangible lock-ordering defect and weaker patch quality despite better operational commentary. A is improved relative to B on correctness robustness and implementation reliability, with only minor verification coverage missing."
+    },
+    {
+      "case_id": "retry-storm-no-dlq",
+      "category": "bad",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 7,
+      "treatment_total": 12,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 5,
+      "normalized_lift": 0.41666666666666663,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Handles malformed and transient/permanent send failures plus ack failure retries, but lacks a durable truth source for processed messages and therefore only weakly guarantees exactly-once-like behavior. No explicit operational verification coverage (metrics/tests), and retry/ack handling is less defensible under real queue edge cases; `Thread.sleep` retrying in handler is also operationally risky.",
+      "treatment_rationale": "Strongest answer: introduces a durable ledger as source-of-truth, classifies malformed and permanent failures to DLQ, enforces bounded retries, and addresses ack-failure semantics with duplicate suppression via idempotent processing state. It also includes concrete observability and fault-injection style verification guidance.",
+      "judge_rationale": "Response A is a stronger and more complete fix across fault handling and correctness boundaries. It is superior on state-of-truth design, idempotency guarantees, and verifiability, so it is the better answer."
+    },
+    {
+      "case_id": "schema-migration-breaking-reader",
+      "category": "bad",
+      "mapping": {
+        "A": "control",
+        "B": "treatment"
+      },
+      "control_total": 7,
+      "treatment_total": 12,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 5,
+      "normalized_lift": 0.41666666666666663,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Provides a correct additive migration shape (publishes both fields and supports fallback in consumer), which prevents the immediate breakage. However, it is narrowly focused on field compatibility and misses explicit operational/contract controls: no source-of-truth or rollout safety framing, limited validation, and no idempotency/duplicate-handling guidance.",
+      "treatment_rationale": "Delivers the same compatible dual-field migration, then explicitly addresses deployment reality for independently deployed readers, missing-field/invalid data failures, duplicate/retry safety, and transactional/ordering implications. Adds concrete validation and operational checks/tests, so it is both safer and more complete for rolling schema migration.",
+      "judge_rationale": "Response B is superior; it keeps backward compatibility while also covering correctness and operability dimensions (source-of-truth boundaries, failure behavior, idempotency guidance, and verification) that response A leaves unresolved."
+    },
+    {
+      "case_id": "seat-booking-write-skew",
+      "category": "bad",
+      "mapping": {
+        "A": "control",
+        "B": "treatment"
+      },
+      "control_total": 4,
+      "treatment_total": 12,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 8,
+      "normalized_lift": 0.6666666666666667,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Response A improves concurrency over naive code by serializing on a locked event row and adds lock/deadlock retry, but the check-then-insert pattern remains application-level and is fragile under transactional-retry behavior and client-level retries. It does not make the invariant durable without an atomic DB check/update and lacks idempotency protection.",
+      "treatment_rationale": "Response B enforces capacity through a single conditional atomic DB update on the event row and ties retries/duplicates to a request-idempotency key with a unique constraint. It also covers failure cases and provides concrete verification ideas, which maps directly to DDIA concurrency-invariant guidance.",
+      "judge_rationale": "B is superior: it encodes the capacity invariant in storage with atomic state transition, handles retries safely via idempotency, and includes stronger operational checks/tests. A remains partial and can still fail correctness under retry/idempotency scenarios."
+    },
+    {
+      "case_id": "stream-consumer-non-idempotent",
+      "category": "bad",
+      "mapping": {
+        "A": "treatment",
+        "B": "control"
+      },
+      "control_total": 9,
+      "treatment_total": 12,
+      "denominator": 12,
+      "control_pass": false,
+      "treatment_pass": true,
+      "lift": 3,
+      "normalized_lift": 0.25,
+      "score_winner": "treatment",
+      "judge_winner": "treatment",
+      "control_rationale": "Correct core patch idea (atomic idempotent write path with ON CONFLICT+tx) but less rigorous than A. It does not explicitly discuss operational failure semantics, recovery checks, or a verification plan (no tests/metrics), so reliability reasoning is thinner despite solid code structure.",
+      "treatment_rationale": "Strongest answer. It correctly identifies replay/duplicate delivery as the root issue and proposes durable idempotency keyed by event id with a unique constraint and atomic transaction for dedupe+points update. It explicitly addresses concurrency, crash/restart behavior, and includes observability + concrete duplicate/restart/concurrency tests.",
+      "judge_rationale": "Response A is superior due to complete treatment of failure modes and explicit verification/observability guidance alongside the same essential idempotent transactional fix. Response B is largely correct but less complete on operational correctness evidence."
+    }
+  ]
+}

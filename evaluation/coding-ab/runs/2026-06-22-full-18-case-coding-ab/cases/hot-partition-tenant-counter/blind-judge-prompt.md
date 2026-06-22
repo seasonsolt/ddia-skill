@@ -1,0 +1,323 @@
+You are the blind LLM judge for a DDIA coding A/B benchmark.
+
+Score Response A and Response B before any mapping is revealed. You must not
+guess, mention, or output which response is control or treatment.
+
+Return JSON that matches the provided schema. Do not include Markdown.
+
+Case ID: hot-partition-tenant-counter
+Category: bad
+
+Important scoring rules:
+- For good and bad coding cases, set anti_pattern_resistance to null.
+- For adversarial coding cases, score anti_pattern_resistance as 0, 1, or 2.
+- Score only observable reasoning and Java patch quality.
+- Do not reward a response for naming ddia-system-design.
+- Prefer practical correctness over broad conceptual prose.
+
+## Rubric
+
+# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment. Use only the case text and the submitted answer. Do not reward mention of ddia-system-design by name; reward the observable reasoning and patch quality.
+
+## Dimensions
+
+1. Correctness invariant
+2. Source-of-truth boundary
+3. Failure-mode handling
+4. Idempotency and retry safety
+5. Operational verification
+6. Java patch quality
+7. Anti-pattern resistance
+
+Base dimensions receive 0, 1, or 2 points.
+For good and bad coding cases, anti-pattern resistance is null and the total is out of 12.
+For adversarial coding cases, anti-pattern resistance receives 0, 1, or 2 points and the total is out of 14.
+
+- 0 points: missing, incorrect, or actively harmful.
+- 1 point: partially addresses the issue but leaves important ambiguity or failure modes.
+- 2 points: concrete, correct, and tied to the case's Java patch and DDIA concern.
+
+Good coding cases pass at 10 out of 12 with every base dimension above 0. They should preserve the correct system boundary and avoid unnecessary distributed coordination or durability machinery.
+Bad coding cases pass at 10 out of 12 with every base dimension above 0. Adversarial coding cases pass at 12 out of 14 with every dimension above 0 and 2 points in anti-pattern resistance.
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded. Then record whether the treatment improved, regressed, or tied the control answer and why.
+
+
+## Full Case, Including Judge-Only Notes
+
+# Coding Case: hot-partition-tenant-counter
+
+Case ID: hot-partition-tenant-counter
+Category: bad
+Language: Java
+Primary DDIA topics: partitioning, scalability, counters, operational metrics
+
+## Scenario
+
+A multi-tenant API records each request by incrementing a per-tenant usage counter in DynamoDB. Most tenants are small, but one large tenant regularly hits throttling during traffic spikes.
+
+## Flawed Java
+
+```java
+public final class UsageCounterService {
+    private final DynamoDbClient dynamo;
+
+    public void recordRequest(String tenantId) {
+        dynamo.updateItem(UpdateItemRequest.builder()
+            .tableName("tenant_usage")
+            .key(Map.of("tenant_id", AttributeValue.fromS(tenantId)))
+            .updateExpression("ADD request_count :one")
+            .expressionAttributeValues(Map.of(":one", AttributeValue.fromN("1")))
+            .build());
+    }
+}
+```
+
+## Task
+
+Review the counter design and propose a patch that handles very high request rates for a single tenant while preserving useful usage reads.
+
+## Expected DDIA Reasoning
+
+The answer should identify that a single hot tenant creates a hot partition because all writes hit the same key. A good patch should shard counters across buckets, aggregate them asynchronously, and define the freshness and accuracy guarantees for reads.
+
+## Strong Patch Signals
+
+- Uses write sharding by bucket, time slice, or random suffix for high-volume tenant counters.
+- Adds periodic compaction or asynchronous aggregation into a read-optimized total.
+- Defines bounded-staleness reads and adds hot-key or throttling metrics.
+
+## Weak Patch Patterns
+
+- Only increases provisioned capacity without addressing the single-key bottleneck.
+- Retries throttled writes aggressively, making the hot partition worse.
+- Switches databases without workload math or a clear partitioning model.
+
+## Scoring Notes
+
+- Award high scores for describing write distribution, read aggregation, and freshness trade-offs together.
+- Penalize answers that hide throttling with retries while losing or delaying usage updates unpredictably.
+
+
+## Response A
+
+You are asking for a DDIA-style review of this DynamoDB counter service and a minimal patch to handle one tenant with bursty high write rate while keeping usage reads usable.
+
+1. Assumptions and workload shape
+- Mix of many low-traffic tenants and one hot tenant.
+- Writes to usage are frequent and spike-driven; reads are needed for dashboards/billing, likely near real-time but not necessarily strict single-write atomic snapshots.
+- DynamoDB request rate is the bottleneck, not Java CPU.
+
+2. Recommendation (smallest useful patch)
+- The current bug is a **hot partition** problem: one `tenant_id` maps to one item, so all spikes for that tenant hit the same partition and throttling kicks in.
+- Split each tenant into multiple counter shards and sum them on read.
+
+Minimal service-level patch (requires table key `tenant_id` + `shard_id`):
+```java
+public final class UsageCounterService {
+    private static final int SHARD_COUNT = 32;
+
+    private final DynamoDbClient dynamo;
+    private final String tableName = "tenant_usage";
+
+    public UsageCounterService(DynamoDbClient dynamo) {
+        this.dynamo = dynamo;
+    }
+
+    public void recordRequest(String tenantId) {
+        int shard = ThreadLocalRandom.current().nextInt(SHARD_COUNT);
+        Map<String, AttributeValue> key = Map.of(
+            "tenant_id", AttributeValue.fromS(tenantId),
+            "shard_id", AttributeValue.fromN(Integer.toString(shard))
+        );
+
+        int attempts = 0;
+        while (true) {
+            try {
+                dynamo.updateItem(UpdateItemRequest.builder()
+                    .tableName(tableName)
+                    .key(key)
+                    .updateExpression("ADD request_count :one")
+                    .expressionAttributeValues(Map.of(":one", AttributeValue.fromN("1")))
+                    .build());
+                return;
+            } catch (DynamoDbException e) {
+                // minimal, bounded retry for throttling
+                if (isRetryableThrottle(e) && attempts < 3) {
+                    attempts++;
+                    try { Thread.sleep((long) (Math.pow(2, attempts) * 10 + ThreadLocalRandom.current().nextDouble(5))); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); throw e; }
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    public long readRequestCount(String tenantId) {
+        long total = 0;
+        Map<String, AttributeValue> lek = null;
+
+        do {
+            QueryRequest.Builder qb = QueryRequest.builder()
+                .tableName(tableName)
+                .keyConditionExpression("tenant_id = :t")
+                .expressionAttributeValues(Map.of(":t", AttributeValue.fromS(tenantId)))
+                .projectionExpression("request_count")
+                .consistentRead(true);
+
+            if (lek != null) qb.exclusiveStartKey(lek);
+            var resp = dynamo.query(qb.build());
+
+            for (Map<String, AttributeValue> item : resp.items()) {
+                AttributeValue v = item.get("request_count");
+                if (v != null && v.n() != null) total += Long.parseLong(v.n());
+            }
+            lek = resp.lastEvaluatedKey();
+        } while (lek != null && !lek.isEmpty());
+
+        return total;
+    }
+
+    private boolean isRetryableThrottle(DynamoDbException e) {
+        String n = e.getClass().getSimpleName();
+        return e instanceof ProvisionedThroughputExceededException
+            || e instanceof ThrottlingException
+            || n.contains("LimitExceededException");
+    }
+}
+```
+
+3. Why this is a distributed-data problem
+- Correctness is now constrained by distributed storage partition mechanics, not just method logic.
+- Your “source of truth” is a single item per tenant; that makes correctness appear simple but creates a capacity choke point.
+- In distributed systems, high fan-in writes to one key become a bottleneck before database transactions can help.
+
+4. Transaction boundaries and source-of-truth impact
+- Write boundary: each `updateItem` is atomic per shard item.
+- Read boundary: `readRequestCount` aggregates multiple items and is therefore a derived view, not a single-item snapshot.
+- Practical guarantee: scalable and monotonic-ish under success, but not perfectly linearizable at tenant level in all races unless you add extra coordination.
+
+5. Idempotency and correctness
+- Retried API calls can still overcount because each retry can re-increment.
+- Current semantics are “at-least-once” writes. If exact billing requires strict deduplication, add an idempotency token path (`requestId`) and conditional write to a per-tenant dedupe set (likely with TTL). Not strictly in “smallest” high-throughput patch.
+
+6. Failure modes
+- If all shards still show throttling, spikes exceed total table capacity or shard count too low.
+- Partition imbalance if random sharding is accidentally poor and one shard receives disproportionate traffic.
+- Read partial failures should fail fast rather than return partial totals.
+- Query pagination errors can drop items unless looped correctly.
+
+7. Operational checks
+- Monitor: `ThrottledRequests` per tenant, per shard; write success/error by exception class; p50/p95 write latency.
+- Hot-spot check: `writes_per_shard` distribution for top tenants.
+- Read cost: query calls per top-tenant read and consumed RCUs.
+- Drift check: periodic background recompute of top tenant totals and alert on large deltas.
+
+8. Tests / validation
+- Load test: one tenant at 10–100x normal burst and verify throttles drop materially versus single-key design.
+- Read consistency check: after N writes, compare `readRequestCount(tenant)` with a controlled total.
+- Failure test: inject throttling exceptions and verify bounded retry behavior.
+- Distribution test: confirm shard usage is roughly even (e.g., chi-square or stddev threshold).
+
+## Response B
+
+A more natural version of your request:  
+You want a counter implementation review and a patch so one very busy tenant doesn’t cause hot-partition throttling, while still keeping usage reads useful and reasonably accurate.
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.BatchGetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.BatchGetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
+
+public final class UsageCounterService {
+    private static final String TABLE_NAME = "tenant_usage";
+    private static final String TENANT_ID_ATTR = "tenant_id";
+    private static final String SHARD_ID_ATTR = "shard_id";
+    private static final String COUNT_ATTR = "request_count";
+    private static final int DEFAULT_SHARD_COUNT = 64;
+
+    private final DynamoDbClient dynamo;
+    private final int shardCount;
+
+    public UsageCounterService(DynamoDbClient dynamo) {
+        this(dynamo, DEFAULT_SHARD_COUNT);
+    }
+
+    public UsageCounterService(DynamoDbClient dynamo, int shardCount) {
+        this.dynamo = dynamo;
+        this.shardCount = Math.max(2, shardCount);
+    }
+
+    public void recordRequest(String tenantId) {
+        String shardId = String.valueOf(ThreadLocalRandom.current().nextInt(shardCount));
+
+        dynamo.updateItem(UpdateItemRequest.builder()
+            .tableName(TABLE_NAME)
+            .key(Map.of(
+                TENANT_ID_ATTR, AttributeValue.fromS(tenantId),
+                SHARD_ID_ATTR, AttributeValue.fromN(shardId)))
+            .updateExpression("ADD #cnt :one")
+            .expressionAttributeNames(Map.of("#cnt", COUNT_ATTR))
+            .expressionAttributeValues(Map.of(":one", AttributeValue.fromN("1")))
+            .build());
+    }
+
+    public long getTenantUsage(String tenantId) {
+        long total = 0L;
+        for (int i = 0; i < shardCount; i += 100) {
+            int end = Math.min(i + 100, shardCount);
+            List<Map<String, AttributeValue>> keys = new ArrayList<>(end - i);
+            for (int shard = i; shard < end; shard++) {
+                keys.add(Map.of(
+                    TENANT_ID_ATTR, AttributeValue.fromS(tenantId),
+                    SHARD_ID_ATTR, AttributeValue.fromN(String.valueOf(shard))));
+            }
+
+            Map<String, KeysAndAttributes> requests = Map.of(
+                TABLE_NAME,
+                KeysAndAttributes.builder()
+                    .keys(keys)
+                    .projectionExpression(COUNT_ATTR)
+                    .build());
+
+            BatchGetItemResponse response = dynamo.batchGetItem(
+                BatchGetItemRequest.builder().requestItems(requests).build());
+
+            while (true) {
+                total += response.responses().getOrDefault(TABLE_NAME, List.of())
+                    .stream()
+                    .mapToLong(item -> Long.parseLong(
+                        item.getOrDefault(COUNT_ATTR, AttributeValue.fromN("0")).n()))
+                    .sum();
+
+                if (response.unprocessedKeys().isEmpty()) {
+                    break;
+                }
+                response = dynamo.batchGetItem(
+                    BatchGetItemRequest.builder().requestItems(response.unprocessedKeys()).build());
+            }
+        }
+        return total;
+    }
+}
+```
+
+Why this helps:
+- `tenant_id + shard_id` spreads writes across `shard_count` partition-key slots, removing the single-hot-partition bottleneck.
+- Reads stay accurate by summing shard counters; you keep existing “usage is meaningful” semantics.
+- Start with 16–64 shards and tune from observed tenant traffic and read/write mix.
+- Table key schema must support both keys (`tenant_id` + `shard_id`, partition/sort) for this to work.

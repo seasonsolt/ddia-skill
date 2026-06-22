@@ -1,0 +1,20 @@
+{
+  "case_id": "hot-partition-tenant-counter",
+  "category": "bad",
+  "mapping": {
+    "A": "treatment",
+    "B": "control"
+  },
+  "control_total": 8,
+  "treatment_total": 11,
+  "denominator": 12,
+  "control_pass": false,
+  "treatment_pass": true,
+  "lift": 3,
+  "normalized_lift": 0.25,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Correctly applies shard-key fan-out and exact batch read summation, but treats reads as exact without discussing staleness/derived-state semantics and provides almost no operational failure diagnostics. No retry/backoff policy or explicit handling of throttled writes; no idempotency discussion; verification guidance is minimal.",
+  "treatment_rationale": "Strong: shards writes by random bucket and aggregates reads with pagination, directly addressing the hot partition. Explicitly names per-tenant derived totals and adds bounded retry/monitoring checks and read consistency caveats. Main weakness is retry semantics: bounded retries can overcount without idempotency keys, so idempotency safety is partial.",
+  "judge_rationale": "Response A is clearly superior: it is more complete on boundary reasoning, read/write scaling behavior, and operational checks, while B is a mostly mechanical sharding patch with weaker failure/idempotency handling and minimal verification guidance."
+}

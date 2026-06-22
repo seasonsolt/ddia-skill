@@ -1,0 +1,20 @@
+{
+  "case_id": "elasticsearch-authorization-trap",
+  "category": "adversarial",
+  "mapping": {
+    "A": "treatment",
+    "B": "control"
+  },
+  "control_total": 7,
+  "treatment_total": 11,
+  "denominator": 14,
+  "control_pass": false,
+  "treatment_pass": false,
+  "lift": 4,
+  "normalized_lift": 0.2857142857142857,
+  "score_winner": "treatment",
+  "judge_winner": "treatment",
+  "control_rationale": "Keeps index as the authorization source and uses eventual+primary-fresh retry instead of a durable fallback, which is an anti-pattern for this case. It improves stale-window behavior and observability partially, but does not separate enforcement from derived-index candidate retrieval and can still misauthorize. Missing hardening for search exceptions and no source-of-truth check further weakens correctness.",
+  "treatment_rationale": "Stronger recognition of derived-index trap: introduces a PermissionRepository authoritative path and handles empty/ambiguous/error cases via fallback, plus concrete metrics/tests. Still falls short of full correctness because the fast path can still grant directly from index without mandatory freshness/version validation, so index-derived allow remains possible after permission churn.",
+  "judge_rationale": "A is materially better because it explicitly shifts authority to a durable permission repository on ambiguity/miss/error and treats the index as non-authoritative in those cases; B remains index-authoritative despite retries and therefore violates the central boundary requirement."
+}
