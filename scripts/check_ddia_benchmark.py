@@ -115,6 +115,77 @@ AB_REQUIRED_PHRASES = {
     ],
 }
 
+CODING_AB_CASES = {
+    "checkout-cache-as-truth": "bad",
+    "payment-exactly-once-trap": "adversarial",
+    "order-outbox-missing": "bad",
+    "profile-replica-lag": "bad",
+    "redis-distributed-lock-money-transfer": "adversarial",
+}
+CODING_AB_REQUIRED_FILES = [
+    "evaluation/coding-ab/README.md",
+    "evaluation/coding-ab/control-instructions.md",
+    "evaluation/coding-ab/treatment-instructions.md",
+    "evaluation/coding-ab/blind-llm-judge.md",
+    "evaluation/coding-ab/results-template.md",
+] + [f"evaluation/coding-ab/cases/{case_id}.md" for case_id in CODING_AB_CASES]
+CODING_AB_README_SECTIONS = ["Purpose", "Method", "Case Set", "Limitations"]
+CODING_AB_JUDGE_SECTIONS = ["Scoring Order", "Dimensions", "Mapping Reveal"]
+CODING_AB_JUDGE_DIMENSIONS = [
+    "Java patch correctness",
+    "Source-of-truth reasoning",
+    "Failure-mode coverage",
+    "Transaction and idempotency reasoning",
+    "Verification value",
+    "Anti-pattern resistance",
+]
+CODING_AB_RESULT_SECTIONS = [
+    "Run Metadata",
+    "Hidden Mapping",
+    "Case Scores",
+    "Dimension Differences",
+    "Response Archive",
+    "Overall Decision",
+]
+CODING_AB_CASE_SECTIONS = [
+    "Scenario",
+    "Flawed Java",
+    "Task",
+    "Expected DDIA Reasoning",
+    "Strong Patch Signals",
+    "Weak Patch Patterns",
+    "Scoring Notes",
+]
+CODING_AB_BULLET_CASE_SECTIONS = [
+    "Strong Patch Signals",
+    "Weak Patch Patterns",
+    "Scoring Notes",
+]
+CODING_AB_REQUIRED_PHRASES = {
+    "evaluation/coding-ab/README.md": ["control", "treatment", "Java", "not statistical"],
+    "evaluation/coding-ab/control-instructions.md": [
+        "without using or referencing ddia-system-design",
+        "Do not load, invoke, mention, or rely on the DDIA system design skill",
+    ],
+    "evaluation/coding-ab/treatment-instructions.md": [
+        "Use ddia-system-design",
+        "source of truth",
+        "failure modes",
+        "idempotency",
+    ],
+    "evaluation/coding-ab/blind-llm-judge.md": [
+        "Score Response A and Response B before revealing",
+        "Reveal the mapping only after",
+    ],
+    "evaluation/coding-ab/results-template.md": [
+        "Control score",
+        "Treatment score",
+        "Lift",
+        "Pass/fail change",
+        "Response Archive",
+    ],
+}
+
 
 def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
@@ -273,6 +344,116 @@ def validate_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
     return missing_paths, errors
 
 
+def validate_coding_ab_case(path: pathlib.Path, relative: str, expected_category: str) -> list[str]:
+    text = read_text(path)
+    errors = []
+    lines = text.splitlines()
+    case_id = pathlib.Path(relative).stem
+
+    if not lines or lines[0].strip() != f"# Coding Case: {case_id}":
+        errors.append(f"{relative}: missing # Coding Case: heading")
+
+    if metadata_value(text, "Case ID") != case_id:
+        errors.append(f"{relative}: expected Case ID: {case_id}")
+
+    if metadata_value(text, "Category") != expected_category:
+        errors.append(f"{relative}: expected Category: {expected_category}")
+
+    if metadata_value(text, "Language") != "Java":
+        errors.append(f"{relative}: expected Language: Java")
+
+    topics = metadata_value(text, "Primary DDIA topics")
+    if not topics:
+        errors.append(f"{relative}: missing Primary DDIA topics")
+
+    for section in CODING_AB_CASE_SECTIONS:
+        body = section_body(text, section)
+        if body is None:
+            errors.append(f"{relative}: missing section {section}")
+            continue
+        if section in CODING_AB_BULLET_CASE_SECTIONS and not has_bullet(body):
+            errors.append(f"{relative}: section {section} must include at least one bullet")
+        if section == "Flawed Java" and not re.search(r"```java\s+.*?```", body, flags=re.DOTALL):
+            errors.append(f"{relative}: section Flawed Java must include a java code block")
+
+    return errors
+
+
+def validate_coding_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]:
+    missing_paths: list[str] = []
+    errors: list[str] = []
+
+    for relative in CODING_AB_REQUIRED_FILES:
+        path = repo / relative
+        text = read_text(path)
+        if not path.exists():
+            missing_paths.append(relative)
+            continue
+        if not text.strip():
+            errors.append(f"{relative}: file is empty")
+            continue
+        for phrase in CODING_AB_REQUIRED_PHRASES.get(relative, []):
+            if phrase not in text:
+                errors.append(f"{relative}: missing phrase {phrase}")
+
+    readme = repo / "evaluation/coding-ab/README.md"
+    if readme.exists():
+        errors.extend(validate_required_sections(readme, "evaluation/coding-ab/README.md", CODING_AB_README_SECTIONS))
+        readme_text = read_text(readme)
+        for case_id in CODING_AB_CASES:
+            relative = f"evaluation/coding-ab/cases/{case_id}.md"
+            if relative not in readme_text:
+                errors.append(f"evaluation/coding-ab/README.md: missing case {relative}")
+
+    judge = repo / "evaluation/coding-ab/blind-llm-judge.md"
+    if judge.exists():
+        errors.extend(
+            validate_required_sections(
+                judge,
+                "evaluation/coding-ab/blind-llm-judge.md",
+                CODING_AB_JUDGE_SECTIONS,
+            )
+        )
+        dimensions_body = section_body(read_text(judge), "Dimensions") or ""
+        for dimension in CODING_AB_JUDGE_DIMENSIONS:
+            if not has_dimension(dimensions_body, dimension):
+                errors.append(f"evaluation/coding-ab/blind-llm-judge.md: missing dimension {dimension}")
+
+    template = repo / "evaluation/coding-ab/results-template.md"
+    if template.exists():
+        errors.extend(
+            validate_required_sections(
+                template,
+                "evaluation/coding-ab/results-template.md",
+                CODING_AB_RESULT_SECTIONS,
+            )
+        )
+
+    control_text = read_text(repo / "evaluation/coding-ab/control-instructions.md")
+    if control_text and (
+        "without using or referencing ddia-system-design" not in control_text
+        or "Do not load, invoke, mention, or rely on the DDIA system design skill" not in control_text
+    ):
+        errors.append("evaluation/coding-ab/control-instructions.md: must forbid using ddia-system-design")
+
+    treatment_text = read_text(repo / "evaluation/coding-ab/treatment-instructions.md")
+    if treatment_text and (
+        "Use ddia-system-design" not in treatment_text
+        or "source of truth" not in treatment_text
+        or "failure modes" not in treatment_text
+        or "idempotency" not in treatment_text
+    ):
+        errors.append("evaluation/coding-ab/treatment-instructions.md: must require DDIA coding review constraints")
+
+    for case_id, expected_category in CODING_AB_CASES.items():
+        relative = f"evaluation/coding-ab/cases/{case_id}.md"
+        path = repo / relative
+        if path.exists():
+            errors.extend(validate_coding_ab_case(path, relative, expected_category))
+
+    return missing_paths, errors
+
+
 def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
     repo = pathlib.Path(repo)
     case_counts = {}
@@ -318,6 +499,7 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
 
     ab_missing_paths, ab_errors = validate_ab_assets(repo)
     missing_paths.extend(ab_missing_paths)
+    coding_ab_missing_paths, coding_ab_errors = validate_coding_ab_assets(repo)
 
     return {
         "case_counts": case_counts,
@@ -327,6 +509,8 @@ def check_benchmark(repo: pathlib.Path) -> dict[str, object]:
         "template_errors": template_errors,
         "guide_errors": guide_errors,
         "ab_errors": ab_errors,
+        "coding_ab_missing_paths": coding_ab_missing_paths,
+        "coding_ab_errors": coding_ab_errors,
     }
 
 
@@ -345,6 +529,8 @@ def main() -> int:
         "template_errors",
         "guide_errors",
         "ab_errors",
+        "coding_ab_missing_paths",
+        "coding_ab_errors",
     ]
     return 1 if any(report[key] for key in error_keys) else 0
 

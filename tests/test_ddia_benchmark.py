@@ -308,6 +308,170 @@ Responses are preserved under each case section in this file.
     )
 
 
+def coding_case_text(*, case_id: str, category: str) -> str:
+    return f"""# Coding Case: {case_id}
+
+Case ID: {case_id}
+Category: {category}
+Language: Java
+Primary DDIA topics: transactions, replication, fault tolerance
+
+## Scenario
+
+A Java service handles a user-facing write path where an apparently simple implementation hides a data-systems correctness problem.
+
+## Flawed Java
+
+```java
+class ExampleService {{
+    void handle(String id) {{
+        System.out.println("processed " + id);
+    }}
+}}
+```
+
+## Task
+
+Review the code and propose a patch that improves correctness without pretending that a library call can remove distributed-systems trade-offs.
+
+## Expected DDIA Reasoning
+
+The answer should discuss the source of truth, atomicity boundaries, failure modes, retries, idempotency, and observable verification.
+
+## Strong Patch Signals
+
+- Names the durable source of truth and preserves invariants across failures.
+- Adds concrete retry, idempotency, or reconciliation behavior with tests.
+
+## Weak Patch Patterns
+
+- Treats a cache, lock, or callback as proof that the data is correct.
+- Ignores crash windows, duplicate requests, or replica lag.
+
+## Scoring Notes
+
+- Award credit for explicit failure-mode reasoning before tool choices.
+- Penalize patches that move the race without defining a correctness boundary.
+"""
+
+
+def make_complete_coding_ab_assets(root: pathlib.Path) -> None:
+    write(
+        root / "evaluation/coding-ab/README.md",
+        """# DDIA Coding A/B Evaluation
+
+## Purpose
+
+Compare Java coding review answers from a control prompt against answers that use ddia-system-design reasoning.
+
+## Method
+
+Run each coding case twice with hidden control and treatment labels, then score the patch quality before revealing the mapping.
+
+## Case Set
+
+- evaluation/coding-ab/cases/checkout-cache-as-truth.md
+- evaluation/coding-ab/cases/payment-exactly-once-trap.md
+- evaluation/coding-ab/cases/order-outbox-missing.md
+- evaluation/coding-ab/cases/profile-replica-lag.md
+- evaluation/coding-ab/cases/redis-distributed-lock-money-transfer.md
+
+## Limitations
+
+This benchmark checks coding-review behavior, not statistical significance.
+""",
+    )
+    write(
+        root / "evaluation/coding-ab/control-instructions.md",
+        """# Coding Control Instructions
+
+Answer the Java coding case without using or referencing ddia-system-design.
+
+Do not load, invoke, mention, or rely on the DDIA system design skill.
+""",
+    )
+    write(
+        root / "evaluation/coding-ab/treatment-instructions.md",
+        """# Coding Treatment Instructions
+
+Use ddia-system-design for the Java coding case.
+
+Frame the patch around assumptions, source of truth, consistency, failure modes, transactions, idempotency, operations, and tests.
+""",
+    )
+    write(
+        root / "evaluation/coding-ab/blind-llm-judge.md",
+        """# Blind LLM Judge
+
+## Scoring Order
+
+Score Response A and Response B before revealing which response is control or treatment.
+
+## Dimensions
+
+1. Java patch correctness
+2. Source-of-truth reasoning
+3. Failure-mode coverage
+4. Transaction and idempotency reasoning
+5. Verification value
+6. Anti-pattern resistance
+
+## Mapping Reveal
+
+Reveal the mapping only after all dimensions, notes, and pass decisions are recorded.
+""",
+    )
+    write(
+        root / "evaluation/coding-ab/results-template.md",
+        """# DDIA Coding A/B Results Template
+
+## Run Metadata
+
+- Evaluator:
+- Date:
+- Model:
+- Skill version:
+
+## Hidden Mapping
+
+- Response A:
+- Response B:
+
+## Case Scores
+
+| Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+
+## Dimension Differences
+
+Record Java patch correctness, source-of-truth reasoning, failure-mode coverage, transaction and idempotency reasoning, verification value, and anti-pattern resistance.
+
+## Response Archive
+
+Preserve Response A and Response B for every coding case.
+
+## Overall Decision
+
+- Total control score:
+- Total treatment score:
+- Total lift:
+- Limitations:
+""",
+    )
+    cases = {
+        "checkout-cache-as-truth": "bad",
+        "payment-exactly-once-trap": "adversarial",
+        "order-outbox-missing": "bad",
+        "profile-replica-lag": "bad",
+        "redis-distributed-lock-money-transfer": "adversarial",
+    }
+    for case_id, category in cases.items():
+        write(
+            root / f"evaluation/coding-ab/cases/{case_id}.md",
+            coding_case_text(case_id=case_id, category=category),
+        )
+
+
 class DdiaBenchmarkTest(unittest.TestCase):
     def test_current_repo_benchmark_is_complete(self):
         checker = load_checker()
@@ -321,6 +485,16 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(report["template_errors"], [])
         self.assertEqual(report["guide_errors"], [])
         self.assertEqual(report["ab_errors"], [])
+        self.assertEqual(report["coding_ab_missing_paths"], [])
+        self.assertEqual(report["coding_ab_errors"], [])
+
+    def test_current_repo_coding_ab_assets_are_complete(self):
+        checker = load_checker()
+
+        missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(REPO)
+
+        self.assertEqual(missing_paths, [])
+        self.assertEqual(coding_ab_errors, [])
 
     def test_checker_accepts_complete_benchmark(self):
         checker = load_checker()
@@ -328,6 +502,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
             make_complete_ab_assets(repo)
+            make_complete_coding_ab_assets(repo)
 
             report = checker.check_benchmark(repo)
 
@@ -338,6 +513,8 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(report["template_errors"], [])
         self.assertEqual(report["guide_errors"], [])
         self.assertEqual(report["ab_errors"], [])
+        self.assertEqual(report["coding_ab_missing_paths"], [])
+        self.assertEqual(report["coding_ab_errors"], [])
 
     def test_benchmark_checker_reports_missing_ab_file(self):
         checker = load_checker()
@@ -345,6 +522,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
             make_complete_ab_assets(repo)
+            make_complete_coding_ab_assets(repo)
             (repo / "evaluation/ab/pilot-results.md").unlink()
 
             report = checker.check_benchmark(repo)
@@ -356,6 +534,8 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            make_complete_coding_ab_assets(repo)
             case_path = repo / "evaluation/cases/bad/01-bad-case.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace("## Strong Answer Signals", "## Strong Signals"),
@@ -374,6 +554,8 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            make_complete_coding_ab_assets(repo)
             case_path = repo / "evaluation/cases/adversarial/01-adversarial-case.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace("Category: adversarial", "Category: good"),
@@ -392,6 +574,8 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            make_complete_coding_ab_assets(repo)
             case_path = repo / "evaluation/cases/bad/02-bad-case.md"
             case_path.write_text(
                 case_path.read_text(encoding="utf-8").replace(
@@ -413,6 +597,8 @@ class DdiaBenchmarkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            make_complete_coding_ab_assets(repo)
             rubric_path = repo / "evaluation/rubrics/answer-quality.md"
             rubric_path.write_text(
                 rubric_path.read_text(encoding="utf-8").replace("6. Anti-pattern resistance\n", ""),
@@ -437,6 +623,36 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
         self.assertEqual(ab_errors, [])
         self.assertEqual(missing_paths, [])
+
+    def test_checker_accepts_complete_coding_ab_assets(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(coding_ab_errors, [])
+        self.assertEqual(missing_paths, [])
+
+    def test_checker_rejects_coding_case_without_java_block(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            case_path = repo / "evaluation/coding-ab/cases/checkout-cache-as-truth.md"
+            case_path.write_text(
+                case_path.read_text(encoding="utf-8").replace("```java", "```"),
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/cases/checkout-cache-as-truth.md: section Flawed Java must include a java code block",
+            coding_ab_errors,
+        )
 
     def test_checker_reports_missing_ab_file(self):
         checker = load_checker()
