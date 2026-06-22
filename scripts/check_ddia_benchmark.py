@@ -226,6 +226,19 @@ def first_fenced_code_block(text: str, language: str) -> str | None:
     return match.group(1) if match else None
 
 
+def markdown_table_first_column_values(body: str) -> set[str]:
+    values = set()
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells or cells[0] == "Case" or set(cells[0]) <= {"-", " "}:
+            continue
+        values.add(cells[0])
+    return values
+
+
 def has_markdown_section(text: str, heading: str) -> bool:
     return section_body(text, heading) is not None
 
@@ -442,8 +455,10 @@ def validate_coding_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]
                 CODING_AB_RESULT_SECTIONS,
             )
         )
+        case_scores = section_body(template_text, "Case Scores") or ""
+        template_case_ids = markdown_table_first_column_values(case_scores)
         for case_id in CODING_AB_CASES:
-            if case_id not in template_text:
+            if case_id not in template_case_ids:
                 errors.append(f"evaluation/coding-ab/results-template.md: missing case {case_id}")
 
     control_text = read_text(repo / "evaluation/coding-ab/control-instructions.md")

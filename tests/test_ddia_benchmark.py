@@ -715,6 +715,30 @@ class ExampleService {
             coding_ab_errors,
         )
 
+    def test_checker_rejects_results_template_case_only_in_prose(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            template_path = repo / "evaluation/coding-ab/results-template.md"
+            template_text = template_path.read_text(encoding="utf-8")
+            template_path.write_text(
+                template_text.replace(
+                    "| profile-replica-lag | bad |  |  |  |  |  |\n",
+                    "",
+                )
+                + "\n<!-- profile-replica-lag is intentionally mentioned outside the table. -->\n",
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/results-template.md: missing case profile-replica-lag",
+            coding_ab_errors,
+        )
+
     def test_checker_rejects_judge_without_score_scale(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
