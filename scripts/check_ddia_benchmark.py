@@ -94,6 +94,14 @@ AB_PILOT_CASE_SCORE_SLUGS = {
     "evaluation/cases/adversarial/02-exactly-once-trap.md": "exactly-once-trap",
     "evaluation/cases/bad/04-vague-startup-architecture.md": "vague-startup-architecture",
 }
+AB_ALLOWED_SCORE_CATEGORIES = {"good", "bad", "adversarial"}
+AB_PILOT_CASE_SCORE_CATEGORIES = {
+    "order-consistency": "good",
+    "replica-lag": "good",
+    "cache-as-truth": "bad",
+    "exactly-once-trap": "adversarial",
+    "vague-startup-architecture": "bad",
+}
 AB_REQUIRED_PHRASES = {
     "evaluation/ab/README.md": [
         "control",
@@ -284,6 +292,11 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
 
         control_total += control
         treatment_total += treatment
+        if category not in AB_ALLOWED_SCORE_CATEGORIES:
+            errors.append(f"{relative}: {case} unknown category {category}")
+        expected_category = AB_PILOT_CASE_SCORE_CATEGORIES.get(case)
+        if expected_category is not None and category != expected_category:
+            errors.append(f"{relative}: {case} expected category {expected_category}, found {category}")
         if control_den != treatment_den:
             errors.append(f"{relative}: {case} control and treatment denominators must match")
 
@@ -296,6 +309,10 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
         if control_den <= 0 or treatment_den <= 0:
             errors.append(f"{relative}: {case} score denominator must be greater than 0")
             continue
+        if not 0 <= control <= control_den:
+            errors.append(f"{relative}: {case} control score must be between 0 and {control_den}")
+        if not 0 <= treatment <= treatment_den:
+            errors.append(f"{relative}: {case} treatment score must be between 0 and {treatment_den}")
 
         expected_control_norm = control / control_den * 100
         expected_treatment_norm = treatment / treatment_den * 100

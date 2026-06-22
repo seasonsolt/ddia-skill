@@ -595,6 +595,38 @@ class DdiaBenchmarkTest(unittest.TestCase):
             ab_errors,
         )
 
+    def test_checker_rejects_pilot_score_above_denominator(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| order-consistency | good | 7/10 | 9/10 | +2 | 70.0% | 90.0% | +20.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+                "| order-consistency | good | 11/10 | 12/10 | +1 | 110.0% | 120.0% | +10.0 pp | fail to pass | Treatment added stronger verification and failure-mode reasoning. |",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 42")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 54")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +12")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 76.0%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 97.3%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +21.3 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency control score must be between 0 and 10",
+            ab_errors,
+        )
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: order-consistency treatment score must be between 0 and 10",
+            ab_errors,
+        )
+
     def test_checker_rejects_pilot_score_denominator_mismatch(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -641,6 +673,36 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(missing_paths, [])
         self.assertIn(
             "evaluation/ab/pilot-results.md: cache-as-truth expected denominator 12 for category bad",
+            ab_errors,
+        )
+
+    def test_checker_rejects_pilot_unknown_score_category(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "| order-consistency | good | 7/10 | 9/10 |",
+                    "| order-consistency | typo | 7/10 | 9/10 |",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertTrue(
+            any(
+                error
+                in {
+                    "evaluation/ab/pilot-results.md: order-consistency unknown category typo",
+                    "evaluation/ab/pilot-results.md: order-consistency expected category good, found typo",
+                }
+                for error in ab_errors
+            ),
             ab_errors,
         )
 
