@@ -482,6 +482,33 @@ Preserve Response A and Response B for every coding case.
         )
 
 
+def valid_judge_payload(case_id: str = "checkout-cache-as-truth") -> dict:
+    scores = {
+        "correctness_invariant": 2,
+        "source_of_truth_boundary": 2,
+        "failure_mode_handling": 2,
+        "idempotency_retry_safety": 2,
+        "operational_verification": 1,
+        "java_patch_quality": 2,
+        "anti_pattern_resistance": 2,
+    }
+    total = sum(scores.values())
+
+    def response_result() -> dict:
+        return {
+            "scores": scores.copy(),
+            "total": total,
+            "pass": True,
+            "rationale": "This response preserves durable invariants and handles realistic failure modes.",
+        }
+
+    return {
+        "case_id": case_id,
+        "response_a": response_result(),
+        "response_b": response_result(),
+    }
+
+
 class DdiaBenchmarkTest(unittest.TestCase):
     def test_current_repo_benchmark_is_complete(self):
         checker = load_checker()
@@ -760,6 +787,42 @@ class ExampleService {
             "evaluation/coding-ab/blind-llm-judge.md: missing phrase 0, 1, or 2 points",
             coding_ab_errors,
         )
+
+    def test_checker_accepts_valid_coding_ab_judge_payload(self):
+        checker = load_checker()
+
+        errors = checker.validate_coding_ab_judge_result_payload(valid_judge_payload())
+
+        self.assertEqual(errors, [])
+
+    def test_checker_rejects_coding_ab_judge_total_mismatch(self):
+        checker = load_checker()
+        payload = valid_judge_payload()
+        payload["response_a"]["total"] = 12
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn("response_a: total 12 does not match score sum 13", errors)
+
+    def test_checker_rejects_coding_ab_judge_score_out_of_bounds(self):
+        checker = load_checker()
+        payload = valid_judge_payload()
+        payload["response_b"]["scores"]["java_patch_quality"] = 3
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn("response_b: java_patch_quality must be 0, 1, 2, or null", errors)
+
+    def test_checker_rejects_coding_ab_judge_mapping_leak(self):
+        checker = load_checker()
+        payload = valid_judge_payload()
+        payload["response_a"]["mapping"] = "control"
+        payload["response_b"]["variant"] = "treatment"
+
+        errors = checker.validate_coding_ab_judge_result_payload(payload)
+
+        self.assertIn("response_a: must not reveal control or treatment mapping", errors)
+        self.assertIn("response_b: must not reveal control or treatment mapping", errors)
 
     def test_checker_reports_missing_ab_file(self):
         checker = load_checker()

@@ -188,6 +188,16 @@ CODING_AB_REQUIRED_PHRASES = {
         "Response Archive",
     ],
 }
+CODING_AB_SCORE_KEYS = [
+    "correctness_invariant",
+    "source_of_truth_boundary",
+    "failure_mode_handling",
+    "idempotency_retry_safety",
+    "operational_verification",
+    "java_patch_quality",
+    "anti_pattern_resistance",
+]
+CODING_AB_RESPONSE_KEYS = ["response_a", "response_b"]
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -401,6 +411,60 @@ def validate_coding_ab_case(path: pathlib.Path, relative: str, expected_category
                 errors.append(f"{relative}: section Flawed Java must include a java code block")
             elif not java_code.strip():
                 errors.append(f"{relative}: section Flawed Java must include non-empty java code")
+
+    return errors
+
+
+def validate_coding_ab_judge_result_payload(payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        return ["payload: must be a JSON object"]
+
+    errors = []
+
+    case_id = payload.get("case_id")
+    if not isinstance(case_id, str) or not case_id.strip():
+        errors.append("case_id: must be a non-empty string")
+
+    for response_key in CODING_AB_RESPONSE_KEYS:
+        response = payload.get(response_key)
+        if not isinstance(response, dict):
+            errors.append(f"{response_key}: must be an object")
+            continue
+
+        if any(leak_key in response for leak_key in ["mapping", "arm", "variant"]):
+            errors.append(f"{response_key}: must not reveal control or treatment mapping")
+
+        scores = response.get("scores")
+        score_sum = 0
+        if not isinstance(scores, dict):
+            errors.append(f"{response_key}: scores must be an object")
+        else:
+            for score_key in CODING_AB_SCORE_KEYS:
+                if score_key not in scores:
+                    errors.append(f"{response_key}: missing score {score_key}")
+                    continue
+
+                score = scores[score_key]
+                if score is None:
+                    continue
+                if isinstance(score, bool) or score not in {0, 1, 2}:
+                    errors.append(f"{response_key}: {score_key} must be 0, 1, 2, or null")
+                    continue
+                score_sum += score
+
+        total = response.get("total")
+        if isinstance(total, bool) or not isinstance(total, int):
+            errors.append(f"{response_key}: total must be an integer")
+        elif isinstance(scores, dict) and total != score_sum:
+            errors.append(f"{response_key}: total {total} does not match score sum {score_sum}")
+
+        passed = response.get("pass")
+        if not isinstance(passed, bool):
+            errors.append(f"{response_key}: pass must be a boolean")
+
+        rationale = response.get("rationale")
+        if not isinstance(rationale, str) or len(rationale.strip()) < 20:
+            errors.append(f"{response_key}: rationale must be at least 20 characters")
 
     return errors
 
