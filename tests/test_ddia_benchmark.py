@@ -841,6 +841,28 @@ class DdiaBenchmarkTest(unittest.TestCase):
             ab_errors,
         )
 
+    def test_benchmark_checker_reports_ab_content_error(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace(
+                    "- Single model: the pilot only covers GPT-5 Codex.\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            report = checker.check_benchmark(repo)
+
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: missing limitation Single model",
+            report["ab_errors"],
+        )
+
     def test_checker_rejects_control_instructions_that_ban_structured_answers(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:
