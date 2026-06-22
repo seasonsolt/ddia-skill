@@ -604,6 +604,26 @@ class DdiaBenchmarkTest(unittest.TestCase):
             ab_errors,
         )
 
+    def test_checker_rejects_pilot_unparseable_score_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_path.write_text(
+                pilot_path.read_text(encoding="utf-8").replace("7/10", "7", 1),
+                encoding="utf-8",
+            )
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: unparseable score row for order-consistency",
+            ab_errors,
+        )
+
     def test_checker_rejects_pilot_score_zero_denominator(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:

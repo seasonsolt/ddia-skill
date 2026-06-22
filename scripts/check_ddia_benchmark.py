@@ -266,7 +266,11 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
 
     for line in score_text.splitlines():
         cells = markdown_table_cells(line)
-        if cells is None or len(cells) < 8:
+        if cells is None:
+            continue
+        if len(cells) < 8:
+            case = cells[0] if cells else "<unknown>"
+            errors.append(f"{relative}: malformed score row for {case}")
             continue
 
         case = cells[0]
@@ -285,6 +289,7 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
             or treatment_norm is None
             or normalized_lift is None
         ):
+            errors.append(f"{relative}: unparseable score row for {case}")
             continue
 
         score_row_cases.add(case)
