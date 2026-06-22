@@ -176,6 +176,9 @@ CODING_AB_REQUIRED_PHRASES = {
     "evaluation/coding-ab/blind-llm-judge.md": [
         "Score Response A and Response B before revealing",
         "Reveal the mapping only after",
+        "0, 1, or 2 points",
+        "Bad coding cases pass",
+        "Adversarial coding cases pass",
     ],
     "evaluation/coding-ab/results-template.md": [
         "Control score",
@@ -215,6 +218,12 @@ def metadata_value(text: str, label: str) -> str | None:
         if line.startswith(prefix):
             return line[len(prefix) :].strip()
     return None
+
+
+def first_fenced_code_block(text: str, language: str) -> str | None:
+    pattern = rf"```{re.escape(language)}\s*\n(.*?)```"
+    match = re.search(pattern, text, flags=re.DOTALL)
+    return match.group(1) if match else None
 
 
 def has_markdown_section(text: str, heading: str) -> bool:
@@ -373,8 +382,12 @@ def validate_coding_ab_case(path: pathlib.Path, relative: str, expected_category
             continue
         if section in CODING_AB_BULLET_CASE_SECTIONS and not has_bullet(body):
             errors.append(f"{relative}: section {section} must include at least one bullet")
-        if section == "Flawed Java" and not re.search(r"```java\s+.*?```", body, flags=re.DOTALL):
-            errors.append(f"{relative}: section Flawed Java must include a java code block")
+        if section == "Flawed Java":
+            java_code = first_fenced_code_block(body, "java")
+            if java_code is None:
+                errors.append(f"{relative}: section Flawed Java must include a java code block")
+            elif not java_code.strip():
+                errors.append(f"{relative}: section Flawed Java must include non-empty java code")
 
     return errors
 
@@ -421,6 +434,7 @@ def validate_coding_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]
 
     template = repo / "evaluation/coding-ab/results-template.md"
     if template.exists():
+        template_text = read_text(template)
         errors.extend(
             validate_required_sections(
                 template,
@@ -428,6 +442,9 @@ def validate_coding_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]
                 CODING_AB_RESULT_SECTIONS,
             )
         )
+        for case_id in CODING_AB_CASES:
+            if case_id not in template_text:
+                errors.append(f"evaluation/coding-ab/results-template.md: missing case {case_id}")
 
     control_text = read_text(repo / "evaluation/coding-ab/control-instructions.md")
     if control_text and (

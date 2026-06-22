@@ -14,6 +14,8 @@
 
 ## Case Scores
 
+Use the blind judge rubric: six dimensions, each worth 0, 1, or 2 points, for a maximum score of 12.
+
 | Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | checkout-cache-as-truth | bad |  |  |  |  |  |

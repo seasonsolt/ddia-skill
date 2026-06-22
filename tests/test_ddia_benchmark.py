@@ -416,6 +416,11 @@ Score Response A and Response B before revealing which response is control or tr
 5. Verification value
 6. Anti-pattern resistance
 
+Each dimension receives 0, 1, or 2 points.
+
+Bad coding cases pass at 9 out of 12 with no zero in anti-pattern resistance.
+Adversarial coding cases pass at 10 out of 12 with 2 points in anti-pattern resistance.
+
 ## Mapping Reveal
 
 Reveal the mapping only after all dimensions, notes, and pass decisions are recorded.
@@ -441,10 +446,15 @@ Reveal the mapping only after all dimensions, notes, and pass decisions are reco
 
 | Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| checkout-cache-as-truth | bad |  |  |  |  |  |
+| payment-exactly-once-trap | adversarial |  |  |  |  |  |
+| order-outbox-missing | bad |  |  |  |  |  |
+| profile-replica-lag | bad |  |  |  |  |  |
+| redis-distributed-lock-money-transfer | adversarial |  |  |  |  |  |
 
 ## Dimension Differences
 
-Record Java patch correctness, source-of-truth reasoning, failure-mode coverage, transaction and idempotency reasoning, verification value, and anti-pattern resistance.
+Record Java patch correctness, source-of-truth reasoning, failure-mode coverage, transaction and idempotency reasoning, verification value, and anti-pattern resistance. Scores use the blind judge rubric where each dimension receives 0, 1, or 2 points.
 
 ## Response Archive
 
@@ -651,6 +661,79 @@ class DdiaBenchmarkTest(unittest.TestCase):
         self.assertEqual(missing_paths, [])
         self.assertIn(
             "evaluation/coding-ab/cases/checkout-cache-as-truth.md: section Flawed Java must include a java code block",
+            coding_ab_errors,
+        )
+
+    def test_checker_rejects_coding_case_with_empty_java_block(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            case_path = repo / "evaluation/coding-ab/cases/checkout-cache-as-truth.md"
+            case_path.write_text(
+                case_path.read_text(encoding="utf-8").replace(
+                    """```java
+class ExampleService {
+    void handle(String id) {
+        System.out.println("processed " + id);
+    }
+}
+```""",
+                    """```java
+```""",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/cases/checkout-cache-as-truth.md: section Flawed Java must include non-empty java code",
+            coding_ab_errors,
+        )
+
+    def test_checker_rejects_results_template_missing_coding_case(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            template_path = repo / "evaluation/coding-ab/results-template.md"
+            template_path.write_text(
+                template_path.read_text(encoding="utf-8").replace(
+                    "| profile-replica-lag | bad |  |  |  |  |  |\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/results-template.md: missing case profile-replica-lag",
+            coding_ab_errors,
+        )
+
+    def test_checker_rejects_judge_without_score_scale(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            judge_path = repo / "evaluation/coding-ab/blind-llm-judge.md"
+            judge_path.write_text(
+                judge_path.read_text(encoding="utf-8").replace(
+                    "Each dimension receives 0, 1, or 2 points.\n\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/blind-llm-judge.md: missing phrase 0, 1, or 2 points",
             coding_ab_errors,
         )
 
