@@ -211,11 +211,45 @@ AB_CONTROL_BANNED_PHRASES = [
 ]
 
 CODING_AB_CASES = {
+    "good-cache-aside-product-preview": "good",
+    "good-outbox-relay-idempotent-consumer": "good",
+    "good-replica-session-token-routing": "good",
+    "good-expand-contract-schema-rollout": "good",
     "checkout-cache-as-truth": "bad",
-    "payment-exactly-once-trap": "adversarial",
     "order-outbox-missing": "bad",
     "profile-replica-lag": "bad",
+    "seat-booking-write-skew": "bad",
+    "schema-migration-breaking-reader": "bad",
+    "stream-consumer-non-idempotent": "bad",
+    "hot-partition-tenant-counter": "bad",
+    "retry-storm-no-dlq": "bad",
+    "missing-reconciliation-observability": "bad",
+    "payment-exactly-once-trap": "adversarial",
     "redis-distributed-lock-money-transfer": "adversarial",
+    "multi-region-last-write-wins-profile": "adversarial",
+    "elasticsearch-authorization-trap": "adversarial",
+    "kafka-total-ordering-trap": "adversarial",
+}
+CODING_AB_EXPECTED_CATEGORY_COUNTS = {"good": 4, "bad": 9, "adversarial": 5}
+CODING_AB_COVERAGE_MATRIX_PATH = "evaluation/coding-ab/coverage-matrix.md"
+CODING_AB_REQUIRED_TOPICS = {
+    "Correct cache use",
+    "Source-of-truth boundary",
+    "Transactional outbox",
+    "Idempotent consumer",
+    "Read-your-writes",
+    "Replica lag",
+    "Isolation and write skew",
+    "Schema evolution",
+    "Stream replay and duplicate delivery",
+    "Partitioning and hot keys",
+    "Backpressure and poison messages",
+    "Observability and reconciliation",
+    "External side effects",
+    "Distributed locks and fencing",
+    "Multi-region conflict resolution",
+    "Derived data authorization",
+    "Ordering guarantees",
 }
 CODING_AB_REQUIRED_FILES = [
     "evaluation/coding-ab/README.md",
@@ -223,6 +257,7 @@ CODING_AB_REQUIRED_FILES = [
     "evaluation/coding-ab/treatment-instructions.md",
     "evaluation/coding-ab/blind-llm-judge.md",
     "evaluation/coding-ab/results-template.md",
+    CODING_AB_COVERAGE_MATRIX_PATH,
 ] + [f"evaluation/coding-ab/cases/{case_id}.md" for case_id in CODING_AB_CASES]
 CODING_AB_README_SECTIONS = ["Purpose", "Method", "Case Set", "Limitations"]
 CODING_AB_JUDGE_SECTIONS = ["Scoring Order", "Dimensions", "Mapping Reveal"]
@@ -352,6 +387,15 @@ def markdown_table_first_column_values(body: str) -> set[str]:
             continue
         values.add(cells[0])
     return values
+
+
+def markdown_table_rows(body: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for line in body.splitlines():
+        cells = markdown_table_cells(line)
+        if cells is not None:
+            rows.append(cells)
+    return rows
 
 
 def numeric_metadata_value(text: str, label: str) -> int | None:
@@ -748,6 +792,64 @@ def validate_coding_ab_case(path: pathlib.Path, relative: str, expected_category
     return errors
 
 
+def validate_coding_ab_coverage_matrix(path: pathlib.Path, relative: str) -> list[str]:
+    text = read_text(path)
+    errors: list[str] = []
+    covered_cases: set[str] = set()
+    covered_topics: set[str] = set()
+    coverage_row_counts: dict[str, int] = {}
+
+    matrix_body = section_body(text, "Coverage Matrix")
+    if matrix_body is None:
+        return [f"{relative}: missing section Coverage Matrix"]
+
+    for row in markdown_table_rows(matrix_body):
+        if len(row) < 3:
+            errors.append(f"{relative}: malformed coverage row for {row[0] if row else '<unknown>'}")
+            continue
+        case_id = row[0]
+        category = row[1]
+        topics = {topic.strip() for topic in row[2].split(",") if topic.strip()}
+        if case_id not in CODING_AB_CASES:
+            errors.append(f"{relative}: unknown coding case {case_id}")
+            continue
+        expected_category = CODING_AB_CASES[case_id]
+        if category != expected_category:
+            errors.append(f"{relative}: {case_id} expected category {expected_category}, found {category}")
+        coverage_row_counts[case_id] = coverage_row_counts.get(case_id, 0) + 1
+        if coverage_row_counts[case_id] > 1:
+            errors.append(f"{relative}: duplicate coverage row for {case_id}")
+        covered_cases.add(case_id)
+        covered_topics.update(topics)
+
+    for case_id in CODING_AB_CASES:
+        if case_id not in covered_cases:
+            errors.append(f"{relative}: missing coverage row for {case_id}")
+
+    for topic in CODING_AB_REQUIRED_TOPICS:
+        if topic not in covered_topics:
+            errors.append(f"{relative}: missing coverage topic {topic}")
+
+    for topic in sorted(covered_topics - CODING_AB_REQUIRED_TOPICS):
+        errors.append(f"{relative}: unknown coverage topic {topic}")
+
+    return errors
+
+
+def validate_coding_ab_category_counts(relative: str = "coding_ab_registry") -> list[str]:
+    counts = {"good": 0, "bad": 0, "adversarial": 0}
+    errors: list[str] = []
+    for category in CODING_AB_CASES.values():
+        if category not in counts:
+            errors.append(f"{relative}: unknown coding category {category}")
+            continue
+        counts[category] += 1
+
+    if counts != CODING_AB_EXPECTED_CATEGORY_COUNTS:
+        errors.append(f"{relative}: expected category counts {CODING_AB_EXPECTED_CATEGORY_COUNTS}, found {counts}")
+    return errors
+
+
 def validate_coding_ab_judge_result_payload(payload: object) -> list[str]:
     if not isinstance(payload, dict):
         return ["payload: must be a JSON object"]
@@ -872,6 +974,8 @@ def validate_coding_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]
             if phrase not in text:
                 errors.append(f"{relative}: missing phrase {phrase}")
 
+    errors.extend(validate_coding_ab_category_counts())
+
     readme = repo / "evaluation/coding-ab/README.md"
     if readme.exists():
         errors.extend(validate_required_sections(readme, "evaluation/coding-ab/README.md", CODING_AB_README_SECTIONS))
@@ -923,6 +1027,10 @@ def validate_coding_ab_assets(repo: pathlib.Path) -> tuple[list[str], list[str]]
             errors.append(
                 "evaluation/coding-ab/results-template.md: must explain adversarial coding cases have max 14"
             )
+
+    coverage_matrix = repo / CODING_AB_COVERAGE_MATRIX_PATH
+    if coverage_matrix.exists():
+        errors.extend(validate_coding_ab_coverage_matrix(coverage_matrix, CODING_AB_COVERAGE_MATRIX_PATH))
 
     control_text = read_text(repo / "evaluation/coding-ab/control-instructions.md")
     if control_text and (

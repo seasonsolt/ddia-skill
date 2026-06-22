@@ -521,9 +521,38 @@ The answer should discuss the source of truth, atomicity boundaries, failure mod
 
 
 def make_complete_coding_ab_assets(root: pathlib.Path) -> None:
+    cases = EXPECTED_EXPANDED_CODING_AB_CASES
+    case_list = "\n".join(f"- evaluation/coding-ab/cases/{case_id}.md" for case_id in cases)
+    score_rows = "\n".join(
+        f"| {case_id} | {category} |  |  |  |  |  |" for case_id, category in cases.items()
+    )
+    coverage_topics = {
+        "good-cache-aside-product-preview": "Correct cache use, Source-of-truth boundary",
+        "good-outbox-relay-idempotent-consumer": "Transactional outbox, Idempotent consumer",
+        "good-replica-session-token-routing": "Read-your-writes, Replica lag",
+        "good-expand-contract-schema-rollout": "Schema evolution",
+        "checkout-cache-as-truth": "Correct cache use, Source-of-truth boundary",
+        "order-outbox-missing": "Transactional outbox, External side effects",
+        "profile-replica-lag": "Read-your-writes, Replica lag",
+        "seat-booking-write-skew": "Isolation and write skew",
+        "schema-migration-breaking-reader": "Schema evolution",
+        "stream-consumer-non-idempotent": "Stream replay and duplicate delivery, Idempotent consumer",
+        "hot-partition-tenant-counter": "Partitioning and hot keys",
+        "retry-storm-no-dlq": "Backpressure and poison messages",
+        "missing-reconciliation-observability": "Observability and reconciliation",
+        "payment-exactly-once-trap": "External side effects, Idempotent consumer",
+        "redis-distributed-lock-money-transfer": "Distributed locks and fencing",
+        "multi-region-last-write-wins-profile": "Multi-region conflict resolution",
+        "elasticsearch-authorization-trap": "Derived data authorization",
+        "kafka-total-ordering-trap": "Ordering guarantees",
+    }
+    coverage_rows = "\n".join(
+        f"| {case_id} | {cases[case_id]} | {coverage_topics[case_id]} |" for case_id in cases
+    )
+    coverage_case_refs = ", ".join(f"`{case_id}`" for case_id in cases)
     write(
         root / "evaluation/coding-ab/README.md",
-        """# DDIA Coding A/B Evaluation
+        f"""# DDIA Coding A/B Evaluation
 
 ## Purpose
 
@@ -535,11 +564,7 @@ Run each coding case twice with hidden control and treatment labels, then score 
 
 ## Case Set
 
-- evaluation/coding-ab/cases/checkout-cache-as-truth.md
-- evaluation/coding-ab/cases/payment-exactly-once-trap.md
-- evaluation/coding-ab/cases/order-outbox-missing.md
-- evaluation/coding-ab/cases/profile-replica-lag.md
-- evaluation/coding-ab/cases/redis-distributed-lock-money-transfer.md
+{case_list}
 
 ## Limitations
 
@@ -596,7 +621,7 @@ Reveal the mapping only after all dimensions, notes, and pass decisions are reco
     )
     write(
         root / "evaluation/coding-ab/results-template.md",
-        """# DDIA Coding A/B Results Template
+        f"""# DDIA Coding A/B Results Template
 
 ## Run Metadata
 
@@ -616,11 +641,7 @@ Use the blind judge rubric: base dimensions are worth up to 12 points. Adversari
 
 | Case | Category | Control score | Treatment score | Lift | Pass/fail change | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| checkout-cache-as-truth | bad |  |  |  |  |  |
-| payment-exactly-once-trap | adversarial |  |  |  |  |  |
-| order-outbox-missing | bad |  |  |  |  |  |
-| profile-replica-lag | bad |  |  |  |  |  |
-| redis-distributed-lock-money-transfer | adversarial |  |  |  |  |  |
+{score_rows}
 
 ## Dimension Differences
 
@@ -638,13 +659,19 @@ Preserve Response A and Response B for every coding case.
 - Limitations:
 """,
     )
-    cases = {
-        "checkout-cache-as-truth": "bad",
-        "payment-exactly-once-trap": "adversarial",
-        "order-outbox-missing": "bad",
-        "profile-replica-lag": "bad",
-        "redis-distributed-lock-money-transfer": "adversarial",
-    }
+    write(
+        root / "evaluation/coding-ab/coverage-matrix.md",
+        f"""# Coding A/B Coverage Matrix
+
+## Coverage Matrix
+
+| Case | Category | Topics |
+| --- | --- | --- |
+{coverage_rows}
+
+Case refs: {coverage_case_refs}
+""",
+    )
     for case_id, category in cases.items():
         write(
             root / f"evaluation/coding-ab/cases/{case_id}.md",
@@ -704,7 +731,7 @@ def valid_judge_payload(case_id: str = "checkout-cache-as-truth") -> dict:
         "operational_verification": 1,
         "java_patch_quality": 2,
     }
-    if case_id in {"payment-exactly-once-trap", "redis-distributed-lock-money-transfer"}:
+    if EXPECTED_EXPANDED_CODING_AB_CASES.get(case_id) == "adversarial":
         scores["anti_pattern_resistance"] = 2
     else:
         scores["anti_pattern_resistance"] = None
@@ -1056,6 +1083,48 @@ class DdiaBenchmarkTest(unittest.TestCase):
 
         self.assertEqual(coding_ab_errors, [])
         self.assertEqual(missing_paths, [])
+
+    def test_checker_rejects_duplicate_coding_coverage_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            matrix_path = repo / "evaluation/coding-ab/coverage-matrix.md"
+            matrix_path.write_text(
+                matrix_path.read_text(encoding="utf-8")
+                + "| good-cache-aside-product-preview | good | Correct cache use |\n",
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/coverage-matrix.md: duplicate coverage row for good-cache-aside-product-preview",
+            coding_ab_errors,
+        )
+
+    def test_checker_rejects_wrong_coding_coverage_category(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_coding_ab_assets(repo)
+            matrix_path = repo / "evaluation/coding-ab/coverage-matrix.md"
+            matrix_path.write_text(
+                matrix_path.read_text(encoding="utf-8").replace(
+                    "| payment-exactly-once-trap | adversarial | External side effects, Idempotent consumer |",
+                    "| payment-exactly-once-trap | good | External side effects, Idempotent consumer |",
+                ),
+                encoding="utf-8",
+            )
+
+            missing_paths, coding_ab_errors = checker.validate_coding_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/coding-ab/coverage-matrix.md: payment-exactly-once-trap expected category adversarial, found good",
+            coding_ab_errors,
+        )
 
     def test_checker_rejects_coding_case_without_java_block(self):
         checker = load_checker()
