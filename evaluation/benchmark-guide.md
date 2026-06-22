@@ -4,6 +4,21 @@
 
 Use this benchmark to verify whether the `ddia-system-design` skill improves backend architecture reasoning. Good cases prove usefulness. Bad and adversarial cases expose weak behavior and become regression tests for future skill iterations.
 
+## Coverage Matrix
+
+The benchmark intentionally covers these DDIA-style backend design behaviors:
+
+- Source-of-truth and derived-data boundaries: `good/01-order-consistency.md`, `bad/01-cache-as-truth.md`, `good/05-derived-data.md`
+- Event pipeline correctness: `good/02-event-pipeline.md`, `good/11-idempotency-outbox.md`, `adversarial/02-exactly-once-trap.md`
+- Storage and database choice: `good/03-database-choice.md`, `good/08-schema-evolution-rollout.md`, `adversarial/04-schema-evolution-trap.md`
+- Replication and consistency: `good/04-replica-lag.md`, `bad/02-replica-lag-denial.md`, `adversarial/05-global-linearizable-writes.md`
+- Partitioning and hot spots: `bad/03-hot-partition.md`, `adversarial/03-distributed-lock-trap.md`
+- Quantitative workload and cost reasoning: `good/06-quantitative-workload-capacity.md`, `bad/05-capacity-cost-handwave.md`
+- Batch/backfill and reconciliation: `good/07-batch-backfill-reconciliation.md`
+- Correct cache use: `good/09-correct-cache-use.md`
+- Observability and operations: `good/10-observability-runbook.md`
+- Ambiguous requirements and requirement discovery: `bad/04-vague-startup-architecture.md`, `adversarial/01-tool-first-trap.md`
+
 ## How To Run
 
 1. Record the current skill version with `git rev-parse --short HEAD`.
