@@ -575,6 +575,35 @@ class DdiaBenchmarkTest(unittest.TestCase):
             ab_errors,
         )
 
+    def test_checker_rejects_pilot_unexpected_score_row(self):
+        checker = load_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            make_complete_benchmark(repo)
+            make_complete_ab_assets(repo)
+            pilot_path = repo / "evaluation/ab/pilot-results.md"
+            pilot_text = pilot_path.read_text(encoding="utf-8")
+            pilot_text = pilot_text.replace(
+                "| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | 66.7% | 83.3% | +16.7 pp | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |\n",
+                "| vague-startup-architecture | bad | 8/12 | 10/12 | +2 | 66.7% | 83.3% | +16.7 pp | diagnostic improvement | Treatment scoped the recommendation and named missing requirements. |\n"
+                "| invented-case | good | 1/10 | 2/10 | +1 | 10.0% | 20.0% | +10.0 pp | no change | Extra row. |\n",
+            )
+            pilot_text = pilot_text.replace("- Total control score: 38", "- Total control score: 39")
+            pilot_text = pilot_text.replace("- Total treatment score: 51", "- Total treatment score: 53")
+            pilot_text = pilot_text.replace("- Total lift: +13", "- Total lift: +14")
+            pilot_text = pilot_text.replace("- Mean normalized control: 68.0%", "- Mean normalized control: 58.4%")
+            pilot_text = pilot_text.replace("- Mean normalized treatment: 91.3%", "- Mean normalized treatment: 79.5%")
+            pilot_text = pilot_text.replace("- Mean normalized lift: +23.3 pp", "- Mean normalized lift: +21.1 pp")
+            pilot_path.write_text(pilot_text, encoding="utf-8")
+
+            missing_paths, ab_errors = checker.validate_ab_assets(repo)
+
+        self.assertEqual(missing_paths, [])
+        self.assertIn(
+            "evaluation/ab/pilot-results.md: unexpected score row for invented-case",
+            ab_errors,
+        )
+
     def test_checker_rejects_pilot_score_zero_denominator(self):
         checker = load_checker()
         with tempfile.TemporaryDirectory() as tmp:

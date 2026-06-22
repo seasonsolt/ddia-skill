@@ -78,6 +78,7 @@ AB_RESULT_SECTIONS = [
     "Case Scores",
     "Dimension Differences",
     "Response Archive",
+    "Limitations",
     "Overall Decision",
 ]
 AB_PILOT_CASES = [
@@ -329,7 +330,12 @@ def validate_ab_score_math(text: str, relative: str) -> list[str]:
         if not close_percent(normalized_lift, expected_normalized_lift):
             errors.append(f"{relative}: {case} normalized lift {normalized_lift:+.1f} pp does not match {expected_normalized_lift:+.1f} pp")
 
-    for case_slug in AB_PILOT_CASE_SCORE_SLUGS.values():
+    expected_score_slugs = tuple(AB_PILOT_CASE_SCORE_SLUGS.values())
+    expected_score_slug_set = set(expected_score_slugs)
+    for case_slug in sorted(score_row_cases - expected_score_slug_set):
+        errors.append(f"{relative}: unexpected score row for {case_slug}")
+
+    for case_slug in expected_score_slugs:
         if case_slug not in score_row_cases:
             errors.append(f"{relative}: missing score row for {case_slug}")
 
