@@ -520,7 +520,7 @@ class DdiaBenchmarkTest(unittest.TestCase):
         readme = (REPO / "README.md").read_text(encoding="utf-8")
         guide = (REPO / "evaluation/benchmark-guide.md").read_text(encoding="utf-8")
 
-        self.assertIn("Coding A/B Result", readme)
+        self.assertIn("Coding A/B Benchmark", readme)
         self.assertIn("evaluation/coding-ab", readme)
         self.assertIn("coding A/B", guide)
         self.assertIn("Java patch", guide)

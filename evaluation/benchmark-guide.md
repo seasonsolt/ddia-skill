@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Use this benchmark to verify whether the `ddia-system-design` skill improves backend architecture reasoning. Good cases prove usefulness. Bad and adversarial cases expose weak behavior and become regression tests for future skill iterations.
+Use this benchmark to verify whether the `ddia-system-design` skill improves backend architecture reasoning. Good cases provide evidence of usefulness. Bad and adversarial cases expose weak behavior and become regression tests for future skill iterations.
 
 ## How To Run
 

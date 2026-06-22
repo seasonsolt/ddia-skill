@@ -95,7 +95,7 @@ notes, and mapping are preserved in
 [`evaluation/ab/pilot-results.md`](evaluation/ab/pilot-results.md) so another
 evaluator can rescore the run.
 
-## Coding A/B Result
+## Coding A/B Benchmark
 
 The next benchmark track uses Java code-review patches instead of architecture
 prose. Each case gives the model flawed Java code, then compares a control
