@@ -131,9 +131,10 @@ benchmark pass and record results in
 Run the deterministic checks from the repository root:
 
 ```bash
-python3 -m unittest discover -s tests -v
-python3 scripts/check_ddia_skill_quality.py --repo .
-python3 scripts/check_ddia_benchmark.py --repo .
+PYTHON=/Users/Thin/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
+$PYTHON -m unittest discover -s tests -v
+$PYTHON scripts/check_ddia_skill_quality.py --repo .
+$PYTHON scripts/check_ddia_benchmark.py --repo .
 ```
 
 Current validation status:
