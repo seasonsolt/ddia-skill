@@ -1,6 +1,6 @@
 # Agent Lab Skill Comparison Evidence
 
-- Generated at: `2026-06-22T15:02:50.222807+00:00`
+- Generated at: `2026-06-23T03:49:06.480578+00:00`
 - Evaluator: `seasonsolt/agent-lab`
 - Treatment repo: `https://github.com/seasonsolt/ddia-skill`
 - Treatment commit: `a2a8695436d01b53a91cb794200c81d7e9532eaf`
@@ -16,13 +16,13 @@
 | Mean auto score | 33.33 | 33.33 | 0.0 |
 | Mean final score | 23.33 | 23.33 | 0.0 |
 | Mean pass rate | 0.0 | 0.0 | 0.0 |
-| Error rate | 1.0 | 1.0 |  |
-| Timeout rate | 1.0 | 1.0 |  |
+| Error rate | 0.33 | 0.0 |  |
+| Timeout rate | 0.0 | 0.0 |  |
 
 ## Run IDs
 
-- Baseline: `eval-2fa51f18397c40f1a66a604cc44400d7, eval-006987e760074245b26e85518642b111, eval-9d4ee8ac80354de79ba28c0c135c9164`
-- Treatment: `eval-26319c097c66486fb1bd07459da34f9a, eval-898c9c72f29341749f82135864a5fe1e, eval-30d3b31a12a543cb875c4c68e147babb`
+- Baseline: `eval-feba7f6c73a74c72b8643d0e6807a524, eval-71a04edce70948d6939cbe49678fa2d4, eval-68d20bf85f1640dcbab7a27878815792`
+- Treatment: `eval-5c1cba64f01843db97372fbc05a73048, eval-522b03a1fc4341dcbccec071c27ffb93, eval-9dcd3aa903534ad5acd5fc416dec0bdd`
 
 ## Reproduction
 
