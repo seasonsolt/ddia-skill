@@ -98,6 +98,16 @@ The response text, scoring notes, and mapping are preserved in
 [`evaluation/ab/pilot-results.md`](evaluation/ab/pilot-results.md) so another
 evaluator can rescore the run.
 
+## External Agent Lab Evaluation
+
+This skill is also evaluated by
+[`seasonsolt/agent-lab`](https://github.com/seasonsolt/agent-lab), an external
+skill evaluation harness that runs repeated baseline/treatment comparisons in
+isolated coding-agent sandboxes.
+
+Latest result: see
+[`evaluation/agent-lab/latest-comparison.md`](evaluation/agent-lab/latest-comparison.md).
+
 ## Coding A/B Benchmark
 
 The next benchmark track uses Java code-review patches instead of architecture

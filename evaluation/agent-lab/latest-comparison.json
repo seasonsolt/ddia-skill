@@ -1,0 +1,54 @@
+{
+  "baseline": {
+    "error_rate": 1.0,
+    "mean_auto_score": 33.33,
+    "mean_final_score": 23.33,
+    "mean_pass_rate": 0.0,
+    "run_ids": [
+      "eval-2fa51f18397c40f1a66a604cc44400d7",
+      "eval-006987e760074245b26e85518642b111",
+      "eval-9d4ee8ac80354de79ba28c0c135c9164"
+    ],
+    "status_counts": {
+      "failed": 3
+    },
+    "timeout_rate": 1.0
+  },
+  "baseline_skill": "example-coding-skill",
+  "evidence": {
+    "baseline_skill_path": "/Users/Thin/Source/git/seasonsolt/agent-lab/skills/example-coding-skill",
+    "evaluator": "seasonsolt/agent-lab",
+    "reproduction_command": "python3 -m skill_lab.cli compare --baseline ./skills/example-coding-skill --treatment-repo https://github.com/seasonsolt/ddia-skill --treatment-skill-path skills/ddia-system-design --task-pack ./task_packs/ddia-coding-real --api-url http://localhost:8000 --runs 3 --network --timeout-seconds 300 --output-dir /tmp/agent-lab-ddia-evidence",
+    "task_pack_path": "/Users/Thin/Source/git/seasonsolt/agent-lab/task_packs/ddia-coding-real",
+    "treatment_repo_commit": "a2a8695436d01b53a91cb794200c81d7e9532eaf",
+    "treatment_repo_url": "https://github.com/seasonsolt/ddia-skill",
+    "treatment_skill_path": "skills/ddia-system-design"
+  },
+  "pass_rate_delta": 0.0,
+  "run_count": {
+    "baseline": 3,
+    "treatment": 3
+  },
+  "score_lift": {
+    "auto_score": 0.0,
+    "final_score": 0.0
+  },
+  "task_pack": "ddia-coding-real",
+  "treatment": {
+    "error_rate": 1.0,
+    "mean_auto_score": 33.33,
+    "mean_final_score": 23.33,
+    "mean_pass_rate": 0.0,
+    "run_ids": [
+      "eval-26319c097c66486fb1bd07459da34f9a",
+      "eval-898c9c72f29341749f82135864a5fe1e",
+      "eval-30d3b31a12a543cb875c4c68e147babb"
+    ],
+    "status_counts": {
+      "failed": 3
+    },
+    "timeout_rate": 1.0
+  },
+  "treatment_skill": "ddia-system-design",
+  "verdict": "inconclusive"
+}
